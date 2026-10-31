@@ -1,10 +1,10 @@
 "use client";
 
 import { Button, Icon } from "@junhadex/core";
-import { FileJson, FolderOutput, Redo2, Undo2, Upload } from "lucide";
+import { Eye, FileJson, Redo2, Undo2, Upload } from "lucide";
 import { useEffect } from "react";
 import { Board } from "./board";
-import { exportHtml, exportJson, importJson } from "./io";
+import { exportJson, importJson, previewHtml } from "./io";
 import { isTyping } from "./keys";
 import { Layers } from "./layers";
 import { load, save } from "./persist";
@@ -60,8 +60,8 @@ export function Editor() {
         <p role="status" className="flex-1 truncate text-center text-xs text-danger">
           {error && `${error.code}: ${error.message}`}
         </p>
-        <Button size="sm" variant="ghost" onClick={exportHtml}>
-          <Icon node={FolderOutput} /> HTML 내보내기
+        <Button size="sm" variant="ghost" onClick={previewHtml}>
+          <Icon node={Eye} /> HTML 미리보기
         </Button>
         <Button size="sm" variant="ghost" onClick={exportJson}>
           <Icon node={FileJson} /> JSON 저장

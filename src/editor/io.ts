@@ -1,29 +1,16 @@
 import { applyOps, childrenOf, type Doc, type Objects, type Op, type Result } from "@/model";
-import { build, toExport } from "@/render";
+import { build, toPreview } from "@/render";
 import { frameOf } from "./geometry";
 import { source, useEditor } from "./store";
 
-// File System Access API는 Chromium 전용이며 TypeScript DOM 타입에 아직 없다.
-type DirHandle = { getFileHandle(name: string, o: { create: boolean }): Promise<{ createWritable(): Promise<WritableStream & { write(d: string): Promise<void>; close(): Promise<void> }> }> };
-declare global {
-  interface Window {
-    showDirectoryPicker(o?: { mode: "readwrite" }): Promise<DirHandle>;
-  }
-}
-
-/** 선택한 노드가 속한 Frame(선택이 없으면 첫 Frame)을 index.html과 style.css로 고른 폴더에 쓴다. */
-export async function exportHtml() {
+/** 선택한 노드가 속한 Frame(선택이 없으면 첫 Frame)의 내보내기 결과를 새 탭에서 연다. */
+export function previewHtml() {
   const { doc, selected } = useEditor.getState();
   const frame = selected ? frameOf(doc, selected) : childrenOf(doc.objects, null)[0]?.[0];
   if (!frame) return;
-  const { html, css } = toExport(build(doc, frame));
-  const dir = await window.showDirectoryPicker({ mode: "readwrite" }).catch(() => null);
-  if (!dir) return;
-  for (const [name, text] of [["index.html", html], ["style.css", css]]) {
-    const file = await (await dir.getFileHandle(name, { create: true })).createWritable();
-    await file.write(text);
-    await file.close();
-  }
+  const url = URL.createObjectURL(new Blob([toPreview(build(doc, frame))], { type: "text/html" }));
+  window.open(url, "_blank");
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export function exportJson() {
