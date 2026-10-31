@@ -12,6 +12,7 @@ type State = {
   error: OpError | null;
   preview: string | null;
   clipped: Record<string, string[]>;
+  heights: Record<string, number>;
 };
 
 // 서버 렌더와 첫 클라이언트 렌더가 같아야 하므로 초기 Frame ID는 고정값이다.
@@ -42,6 +43,7 @@ export const useEditor = create<State>(() => ({
   error: null,
   preview: null,
   clipped: {},
+  heights: {},
 }));
 
 source.subscribe(() => {

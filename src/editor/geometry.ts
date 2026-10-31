@@ -69,6 +69,20 @@ export function scan(el: HTMLIFrameElement, checkOver: boolean): Scan | null {
   return out;
 }
 
+/**
+ * srcdoc을 SVG foreignObject 이미지로 바꾼 data URL. 화면 밖 Frame의 정적 스냅샷에 쓴다.
+ * SVG 이미지는 외부 리소스를 불러오지 않으므로 외부 이미지는 스냅샷에 나타나지 않는다.
+ */
+export function snapshot(html: string, w: number, h: number): string {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const xml = new XMLSerializer();
+  const style = [...doc.querySelectorAll("style")].map((s) => xml.serializeToString(s)).join("");
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%">` +
+    `<html xmlns="http://www.w3.org/1999/xhtml"><head>${style}</head>${xml.serializeToString(doc.body)}</html></foreignObject></svg>`;
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+
 /** 보드 좌표 아래에 있는 가장 안쪽 노드. Frame 밖이면 null이다. */
 export function hit(frames: [string, Obj][], x: number, y: number) {
   for (const [fid, o] of [...frames].reverse()) {

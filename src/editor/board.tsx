@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEv
 import { breakpointsOf, childrenOf, type Doc, type Obj } from "@/model";
 import { build, toSrcdoc } from "@/render";
 import { dropTarget, type Drop } from "./drop";
-import { frameBox, hit, iframes, rectOf, scan, toBoard, type Rect, type Scan } from "./geometry";
+import { frameBox, hit, iframes, rectOf, scan, snapshot, toBoard, type Rect, type Scan } from "./geometry";
 import { activeBp, effective, writeAll } from "./bp";
 import { apply, select, useEditor } from "./store";
 import { isTyping } from "./keys";
@@ -20,6 +20,8 @@ export function Board() {
   const drag = useRef<Drag | null>(null);
   const space = useRef(false);
   const [box, setBox] = useState<Rect | null>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const heights = useEditor((s) => s.heights);
   const [ghost, setGhost] = useState<{ rect?: Rect; line?: Rect } | null>(null);
   const frames = childrenOf(doc.objects, null);
 
@@ -29,6 +31,28 @@ export function Board() {
   }, []);
 
   useEffect(() => useEditor.subscribe((s, p) => s.selected !== p.selected && measure()), [measure]);
+
+  useEffect(() => {
+    const el = ref.current!;
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // 보드 뷰포트(여백 포함)와 겹치고 충분히 확대된 Frame만 실제 iframe으로 띄운다.
+  const live = (id: string, f: Obj) => {
+    if (!size.w) return true;
+    if (view.zoom < 0.25) return false;
+    const b = frameBox(f);
+    const m = 200 / view.zoom;
+    const x0 = -view.x / view.zoom - m;
+    const y0 = -view.y / view.zoom - m;
+    const x1 = (size.w - view.x) / view.zoom + m;
+    const y1 = (size.h - view.y) / view.zoom + m;
+    const w = Math.max(b.w, (f.minWidth as number) ?? 320);
+    const h = Math.max(b.h, heights[id] ?? 0);
+    return b.x < x1 && b.x + w > x0 && b.y < y1 && b.y + h > y0;
+  };
 
   useEffect(() => {
     const el = ref.current!;
@@ -126,7 +150,7 @@ export function Board() {
         style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}
       >
         {frames.map(([id, f]) => (
-          <FrameView key={id} id={id} frame={f} doc={doc} onLoad={measure} hair={1 / view.zoom} />
+          <FrameView key={id} id={id} frame={f} doc={doc} onLoad={measure} hair={1 / view.zoom} live={live(id, f)} />
         ))}
         {box && <Outline rect={box} width={px} />}
         {ghost?.rect && <Outline rect={ghost.rect} width={px} dashed />}
@@ -141,9 +165,9 @@ export function Board() {
   );
 }
 
-type FrameProps = { id: string; frame: Obj; doc: Doc; onLoad: () => void; hair: number };
+type FrameProps = { id: string; frame: Obj; doc: Doc; onLoad: () => void; hair: number; live: boolean };
 
-const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair }: FrameProps) {
+const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair, live }: FrameProps) {
   const html = useMemo(() => toSrcdoc(build(doc, id)), [doc, id]);
   const [res, setRes] = useState<Scan | null>(null);
   const observer = useRef<ResizeObserver | null>(null);
@@ -161,7 +185,7 @@ const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair }: Fram
       const cur = frameBox(useEditor.getState().doc.objects[id]);
       const r = scan(el, cur.w >= minWidth);
       setRes(r);
-      useEditor.setState((s) => ({ clipped: { ...s.clipped, [id]: r?.clipped ?? [] } }));
+      useEditor.setState((s) => ({ clipped: { ...s.clipped, [id]: r?.clipped ?? [] }, heights: { ...s.heights, [id]: r?.contentH ?? 0 } }));
       onLoad();
     };
     observer.current?.disconnect();
@@ -170,23 +194,29 @@ const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair }: Fram
   };
 
   useEffect(() => () => observer.current?.disconnect(), []);
+  const still = useMemo(() => (live ? null : snapshot(html, w, h)), [live, html, w, h]);
 
   return (
     <div className="absolute" style={{ left: b.x, top: b.y }}>
       <FrameBar id={id} frame={frame} doc={doc} />
-      <iframe
-        ref={(el) => {
-          if (!el) return;
-          iframes.set(id, el);
-          return () => void iframes.delete(id);
-        }}
-        title={(frame.name as string) ?? id}
-        srcDoc={html}
-        sandbox="allow-same-origin"
-        onLoad={load}
-        className="pointer-events-none block border-0"
-        style={{ width: w, height: h, background: "#fff" }}
-      />
+      {still ? (
+        // eslint-disable-next-line @next/next/no-img-element -- data URL 스냅샷이라 next/image 최적화가 필요 없다.
+        <img src={still} alt="" className="pointer-events-none block max-w-none" style={{ width: w, height: h, background: "#fff" }} />
+      ) : (
+        <iframe
+          ref={(el) => {
+            if (!el) return;
+            iframes.set(id, el);
+            return () => void iframes.delete(id);
+          }}
+          title={(frame.name as string) ?? id}
+          srcDoc={html}
+          sandbox="allow-same-origin"
+          onLoad={load}
+          className="pointer-events-none block border-0"
+          style={{ width: w, height: h, background: "#fff" }}
+        />
+      )}
       {h > b.h && (
         <div
           className="pointer-events-none absolute left-0"
