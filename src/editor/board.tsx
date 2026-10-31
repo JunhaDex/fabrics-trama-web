@@ -99,7 +99,8 @@ export function Board() {
     setGhost(d.drop && { line: d.drop.line });
   };
 
-  const onPointerUp = () => {
+  const onPointerUp = (e: PointerEvent) => {
+    onPointerMove(e);
     const d = drag.current;
     drag.current = null;
     setGhost(null);
