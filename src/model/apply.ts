@@ -1,14 +1,19 @@
 import { generateKeyBetween } from "fractional-indexing";
 import { z } from "zod";
+import { detachId } from "./hash";
 import {
   BIND_TYPE,
-  bpAllowed,
+  condAllowed,
+  Id,
   KEYS,
   NODE_TYPES,
+  OVERRIDE_KEYS,
   PARENTS,
+  STATES,
   TOKEN_VALUE,
   TokenRef,
   Tx,
+  type Condition,
   type ObjType,
   type Op,
   type Placement,
@@ -34,6 +39,7 @@ export type ErrorCode =
   | "TOKEN_TYPE_MISMATCH"
   | "TOKEN_CYCLE"
   | "TOKEN_IN_USE"
+  | "COMPONENT_IN_USE"
   | "NAME_CONFLICT"
   | "STRUCTURE_LOCKED";
 
@@ -125,7 +131,7 @@ function diff(prev: Objects, next: Objects): Change[] {
   return out;
 }
 
-/** parent의 자식 노드를 (order, id) 사전순으로 돌려준다. parent가 null이면 보드 위 Frame이다. breakpoint는 포함하지 않는다. */
+/** parent의 자식 노드를 (order, id) 사전순으로 돌려준다. parent가 null이면 보드 위 Frame과 컴포넌트다. 노드가 아닌 객체는 포함하지 않는다. */
 export function childrenOf(objects: Objects, parent: string | null): [string, Obj][] {
   return Object.entries(objects)
     .filter(([, o]) => o.parent === parent && isNode(o))
@@ -178,11 +184,58 @@ export function breakpointsOf(objects: Objects, frame: string): [string, Obj][] 
     .sort(([, x], [, y]) => (x.minWidth as number) - (y.minWidth as number));
 }
 
-/** 객체가 속한 Frame의 ID. */
+/** 객체가 속한 루트(Frame 또는 컴포넌트)의 ID. */
 export function frameOf(objects: Objects, id: string): string {
   let cur = id;
   while (objects[cur].parent !== null) cur = objects[cur].parent!;
   return cur;
+}
+
+export type Key = { base: string; bp?: string; cq?: number; var?: [prop: string, option: string]; state?: (typeof STATES)[number] };
+
+const KEY_RE = new RegExp(
+  "^([^@]+)(?:@bp:([A-Za-z0-9_-]{6,32})|@cq:([1-9][0-9]{0,4}))?(?:@var:([A-Za-z0-9_-]{6,32})=([a-z][a-z0-9-]*))?(?:@state:(" +
+    STATES.join("|") +
+    "))?$",
+);
+
+/** 노드 속성 키를 기본키와 조건으로 나눈다. 문법이나 조건 순서가 맞지 않으면 null이다. */
+export function parseKey(k: string): Key | null {
+  const m = KEY_RE.exec(k);
+  if (!m) return null;
+  const key: Key = { base: m[1] };
+  if (m[2]) key.bp = m[2];
+  if (m[3]) key.cq = Number(m[3]);
+  if (m[4]) key.var = [m[4], m[5]];
+  if (m[6]) key.state = m[6] as Key["state"];
+  return key;
+}
+
+/** componentProp이 받는 옵션 값. boolean은 `["true", "false"]`다. */
+export const optionsOf = (cp: Obj): string[] => (cp.kind === "boolean" ? ["true", "false"] : ((cp.options as string[] | undefined) ?? []));
+
+/** 컴포넌트의 componentProp을 이름순(정의 순서)으로 돌려준다. */
+export function componentPropsOf(objects: Objects, comp: string): [string, Obj][] {
+  return Object.entries(objects)
+    .filter(([, o]) => o.parent === comp && o.type === "componentProp")
+    .sort(([, a], [, b]) => ((a.name as string) < (b.name as string) ? -1 : 1));
+}
+
+/**
+ * 인스턴스 override 경로(`a/b/c`)가 가리키는 노드 ID. 첫 구간은 comp 트리의 노드이고, 다음 구간이 있으면 그 노드는
+ * 인스턴스이며 다음 구간은 그 인스턴스의 컴포넌트 트리 노드다. 가리키는 노드가 없으면 null이다.
+ */
+export function overrideTarget(objects: Objects, comp: string, path: string[]): string | null {
+  let cur = comp;
+  for (let i = 0; i < path.length; i++) {
+    const n = objects[path[i]];
+    if (!n || !isNode(n) || frameOf(objects, path[i]) !== cur) return null;
+    if (i < path.length - 1) {
+      if (n.type !== "instance") return null;
+      cur = n.component as string;
+    }
+  }
+  return path[path.length - 1] ?? null;
 }
 
 function apply(o: Objects, op: Op, warnings: Warning[]) {
@@ -197,12 +250,20 @@ function apply(o: Objects, op: Op, warnings: Warning[]) {
         throw new Reject("VALUE_INVALID", op.id, "placement", "노드는 placement가 필요하고, 노드가 아닌 객체는 placement를 받지 않는다");
       checkParent(o, op.type, op.id, op.parent);
       const props = op.props ?? {};
-      checkProps(o, op.type, op.id, op.parent === null ? op.id : frameOf(o, op.parent), props, warnings);
+      const root = op.parent === null ? op.id : frameOf(o, op.parent);
+      if (op.type === "instance") {
+        const c = props.component;
+        if (typeof c !== "string") throw new Reject("VALUE_INVALID", op.id, "component", "instance에는 component가 필요하다");
+        if (o[c]?.type !== "component") throw new Reject("UNKNOWN_OBJECT", c, "component", "component가 가리키는 컴포넌트가 없다");
+        checkUses(o, root, c, op.id);
+      }
+      checkProps(o, op.type, op.id, root, props, warnings, true);
       const obj: Obj = { type: op.type, parent: op.parent };
       if (node) obj.order = orderAt(o, op.parent, op.placement!, op.id);
       for (const [k, v] of Object.entries(props)) if (v !== null) obj[k] = v;
       o[op.id] = obj;
       if (op.type === "breakpoint") checkBreakpoints(o, op.parent!, op.id);
+      if (op.type === "componentProp") checkComponentProps(o, op.parent!);
       if (tokenish(op.type)) checkTokens(o);
       return;
     }
@@ -221,6 +282,10 @@ function apply(o: Objects, op: Op, warnings: Warning[]) {
       if (obj.type === "breakpoint") checkBreakpoints(o, obj.parent!, op.id);
       else if (obj.type === "frame" && "minWidth" in op.props) checkBreakpoints(o, op.id, op.id);
       if (obj.type === "modifier" && "contexts" in op.props) dropContexts(o, op.id);
+      if (obj.type === "componentProp") {
+        checkComponentProps(o, obj.parent!);
+        dropOptions(o, op.id, obj.parent!, new Set(optionsOf(o[op.id])));
+      }
       if (tokenish(obj.type)) checkTokens(o);
       return;
     }
@@ -231,7 +296,14 @@ function apply(o: Objects, op: Op, warnings: Warning[]) {
       checkParent(o, obj.type, op.id, op.parent);
       const from = frameOf(o, op.id);
       o[op.id] = { ...obj, parent: op.parent, order: orderAt(o, op.parent, op.placement, op.id) };
-      if (frameOf(o, op.id) !== from) for (const id of subtree(o, op.id)) strip(o, id, () => true);
+      const to = frameOf(o, op.id);
+      if (to !== from) {
+        for (const id of subtree(o, op.id)) {
+          strip(o, id, () => true);
+          if (o[id].type === "instance") checkUses(o, to, o[id].component as string, id);
+        }
+        prune(o);
+      }
       return;
     }
     case "delete": {
@@ -239,11 +311,116 @@ function apply(o: Objects, op: Op, warnings: Warning[]) {
       if (obj.type === "token") checkUnused(o, op.id);
       if (obj.type === "modifier" && Object.values(o).some((t) => t.type === "token" && t.variesBy === op.id))
         throw new Reject("TOKEN_IN_USE", op.id, null, "이 modifier에 따라 달라지는 토큰이 있다");
+      if (obj.type === "component" && Object.values(o).some((x) => x.type === "instance" && x.component === op.id))
+        throw new Reject("COMPONENT_IN_USE", op.id, null, "이 컴포넌트의 인스턴스가 있다");
       for (const id of subtree(o, op.id)) delete o[id];
-      if (obj.type === "breakpoint") for (const id of Object.keys(o)) strip(o, id, (bp) => bp === op.id);
+      if (obj.type === "breakpoint") for (const id of Object.keys(o)) strip(o, id, (c) => c === `@bp:${op.id}`);
+      if (obj.type === "componentProp") dropOptions(o, op.id, obj.parent!, new Set());
+      if (isNode(obj)) prune(o);
       return;
     }
+    case "detach":
+      return detach(o, op.id);
   }
+}
+
+/** root 트리에 comp의 인스턴스를 두었을 때 컴포넌트가 자기 자신을 (중첩해서) 포함하게 되면 거부한다. */
+function checkUses(o: Objects, root: string, comp: string, id: string) {
+  if (o[root]?.type !== "component" && root !== id) return;
+  const seen = new Set<string>();
+  const visit = (c: string) => {
+    if (c === root) throw new Reject("TREE_CYCLE", id, "component", "컴포넌트가 자기 자신의 인스턴스를 포함하게 된다");
+    if (seen.has(c)) return;
+    seen.add(c);
+    for (const n of subtree(o, c)) if (o[n].type === "instance") visit(o[n].component as string);
+  };
+  visit(comp);
+}
+
+/** componentProp의 필수 키, 옵션, 기본값, 컴포넌트 안 이름 유일성을 검사한다. */
+function checkComponentProps(o: Objects, comp: string) {
+  const names = new Set<string>();
+  for (const [id, cp] of componentPropsOf(o, comp)) {
+    if (!cp.name || !cp.kind || cp.default === undefined)
+      throw new Reject("VALUE_INVALID", id, null, "componentProp에는 name·kind·default가 필요하다");
+    if ((cp.kind === "enum") !== (cp.options !== undefined))
+      throw new Reject("VALUE_INVALID", id, "options", "options는 enum에만, enum에는 반드시 둔다");
+    if (!optionsOf(cp).includes(cp.default as string)) throw new Reject("VALUE_INVALID", id, "default", "default는 옵션 값 중 하나여야 한다");
+    if (names.has(cp.name as string)) throw new Reject("NAME_CONFLICT", id, "name", `${cp.name} 속성이 이미 있다`);
+    names.add(cp.name as string);
+  }
+}
+
+/** keep에 없는 옵션을 가리키는 `@var:` 키와 인스턴스 `props.` 값을 지운다. */
+function dropOptions(o: Objects, cp: string, comp: string, keep: Set<string>) {
+  for (const id of subtree(o, comp)) strip(o, id, (c) => c.startsWith(`@var:${cp}=`) && !keep.has(c.slice(cp.length + 6).split("@")[0]));
+  for (const [id, x] of Object.entries(o)) {
+    const v = x[`props.${cp}`];
+    if (x.type !== "instance" || v === undefined || keep.has(v as string)) continue;
+    const next = { ...x };
+    delete next[`props.${cp}`];
+    o[id] = next;
+  }
+}
+
+/** 경로가 더는 노드를 가리키지 않는 인스턴스 override를 지운다. */
+function prune(o: Objects) {
+  for (const [id, x] of Object.entries(o)) {
+    if (x.type !== "instance") continue;
+    const gone = Object.keys(x).filter((k) => k.startsWith("node.") && !overrideTarget(o, x.component as string, k.slice(5, k.indexOf(".", 5)).split("/")));
+    if (!gone.length) continue;
+    const next = { ...x };
+    for (const k of gone) delete next[k];
+    o[id] = next;
+  }
+}
+
+/**
+ * 인스턴스를 같은 위치의 일반 노드 트리로 바꾼다. 노드 ID는 detachId로 정한다. 인스턴스가 고른 변형의 `@var` 값과
+ * override는 base 값으로 굳히고, `@state`·`@cq` 키는 일반 노드가 가질 수 없으므로 버린다. 중첩 인스턴스는 인스턴스로 남는다.
+ */
+function detach(o: Objects, id: string) {
+  const inst = get(o, id);
+  if (inst.type !== "instance") throw new Reject("VALUE_INVALID", id, null, "인스턴스만 연결 해제할 수 있다");
+  const comp = inst.component as string;
+  const picked = new Set(componentPropsOf(o, comp).map(([cp, p]) => `@var:${cp}=${(inst[`props.${cp}`] as string) ?? p.default}`));
+  const overrides = new Map<string, [string, unknown][]>();
+  for (const [k, v] of Object.entries(inst)) {
+    if (!k.startsWith("node.")) continue;
+    const dot = k.indexOf(".", 5);
+    const path = k.slice(5, dot);
+    const head = path.split("/")[0];
+    overrides.set(head, [...(overrides.get(head) ?? []), [path.includes("/") ? `node.${path.slice(head.length + 1)}${k.slice(dot)}` : k.slice(dot + 1), v]]);
+  }
+  const bake = (src: Obj, type: ObjType): Obj => {
+    const out = {} as Obj;
+    for (const [k, v] of Object.entries(src)) if (!k.includes("@")) out[k] = v;
+    for (const [k, v] of Object.entries(src)) {
+      const at = k.indexOf("@");
+      if (at >= 0 && picked.has(k.slice(at))) out[k.slice(0, at)] = v;
+    }
+    for (const k of Object.keys(out)) if (k !== "type" && k !== "parent" && k !== "order" && !k.startsWith("node.") && !k.startsWith("props.") && !Object.hasOwn(KEYS[type], k)) delete out[k];
+    return out;
+  };
+  const created: Objects = {};
+  const rootId = detachId(id, comp);
+  const r = bake(o[comp], "container");
+  for (const [k, v] of overrides.get(comp) ?? []) r[k] = v;
+  for (const [k, v] of Object.entries(inst)) if (k !== "component" && !k.startsWith("props.") && !k.startsWith("node.")) r[k] = v;
+  created[rootId] = { ...r, type: "container", parent: inst.parent, order: inst.order };
+  for (const n of subtree(o, comp)) {
+    if (n === comp || !isNode(o[n])) continue;
+    const src = o[n];
+    const x = bake(src, src.type);
+    for (const [k, v] of overrides.get(n) ?? []) x[k] = v;
+    created[detachId(id, n)] = { ...x, type: src.type, parent: detachId(id, src.parent!), order: src.order };
+  }
+  delete o[id];
+  for (const [nid, x] of Object.entries(created)) {
+    if (Object.hasOwn(o, nid)) throw new Reject("ID_CONFLICT", nid, null, "연결 해제로 만들 ID가 이미 있다");
+    o[nid] = x;
+  }
+  prune(o);
 }
 
 function subtree(o: Objects, root: string): string[] {
@@ -263,11 +440,11 @@ function subtree(o: Objects, root: string): string[] {
   return out;
 }
 
-/** match가 참인 BP를 가리키는 `@bp:` 키를 지운다. */
-function strip(o: Objects, id: string, match: (bp: string) => boolean) {
+/** 조건 부분(`@` 이후)이 match를 만족하는 조건 키를 지운다. */
+function strip(o: Objects, id: string, match: (cond: string) => boolean) {
   const keys = Object.keys(o[id]).filter((k) => {
-    const m = /@bp:(.+)$/.exec(k);
-    return m && match(m[1]);
+    const at = k.indexOf("@");
+    return at >= 0 && match(k.slice(at));
   });
   if (!keys.length) return;
   const next = { ...o[id] };
@@ -280,9 +457,17 @@ function get(o: Objects, id: string): Obj {
   return o[id];
 }
 
-function checkProps(o: Objects, type: ObjType, id: string, frame: string, props: Record<string, unknown>, warnings: Warning[]) {
+function checkProps(o: Objects, type: ObjType, id: string, root: string, props: Record<string, unknown>, warnings: Warning[], creating = false) {
+  const rootType = root === id ? type : o[root].type;
   for (const [k, v] of Object.entries(props)) {
-    if (k === "type") throw new Reject("TYPE_IMMUTABLE", id, k, "type은 바꿀 수 없다");
+    if (k === "type" || (type === "instance" && k === "component" && !creating))
+      throw new Reject("TYPE_IMMUTABLE", id, k, `${k}는 바꿀 수 없다`);
+    if (type === "instance" && (k.startsWith("props.") || k.startsWith("node."))) {
+      const comp = (creating ? props.component : o[id].component) as string;
+      if (k.startsWith("props.")) checkPropValue(o, id, k, comp, v);
+      else checkOverride(o, id, k, comp, v, warnings);
+      continue;
+    }
     const at = k.indexOf("@");
     const base = at < 0 ? k : k.slice(0, at);
     if (!Object.hasOwn(KEYS[type], base))
@@ -291,19 +476,55 @@ function checkProps(o: Objects, type: ObjType, id: string, frame: string, props:
       if (base !== "value" || !/^@ctx:[a-z][a-z0-9-]*$/.test(k.slice(at)))
         throw new Reject("KEY_INVALID", id, k, "토큰의 조건 키는 value@ctx:<컨텍스트>만 쓴다");
     } else if (at >= 0) {
-      const cond = k.slice(at);
-      if (/^@(var|state):/.test(cond)) throw new Reject("CONDITION_NOT_ALLOWED", id, k, "@var·@state는 컴포넌트 원본에서만 쓴다");
-      const m = /^@bp:([A-Za-z0-9_-]{6,32})$/.exec(cond);
-      if (!m) throw new Reject("KEY_INVALID", id, k, "조건 키 문법이 맞지 않는다");
-      if (type === "breakpoint" || !bpAllowed(base))
-        throw new Reject("CONDITION_NOT_ALLOWED", id, k, "이 키는 BP마다 다르게 둘 수 없다");
-      const bp = o[m[1]];
-      if (!bp || bp.type !== "breakpoint" || bp.parent !== frame)
-        throw new Reject("CONDITION_TARGET_MISSING", id, k, "같은 Frame의 breakpoint가 아니다");
+      const key = parseKey(k);
+      if (!key) throw new Reject("KEY_INVALID", id, k, "조건 키 문법이나 조건 순서(bp|cq → var → state)가 맞지 않는다");
+      const conds = (["bp", "cq", "var", "state"] as Condition[]).filter((c) => key[c] !== undefined);
+      if (!isNode({ type } as Obj) || conds.some((c) => !condAllowed(base, c)))
+        throw new Reject("CONDITION_NOT_ALLOWED", id, k, "이 키는 그 조건으로 다르게 둘 수 없다");
+      if (key.cq !== undefined && conds.length > 1) throw new Reject("CONDITION_NOT_ALLOWED", id, k, "@cq는 다른 조건과 함께 쓸 수 없다");
+      if (key.bp !== undefined ? rootType !== "frame" : rootType !== "component")
+        throw new Reject("CONDITION_NOT_ALLOWED", id, k, key.bp ? "@bp는 Frame 안의 노드에만 쓴다" : "@cq·@var·@state는 컴포넌트 원본에서만 쓴다");
+      if (key.cq !== undefined && id === root) throw new Reject("CONDITION_NOT_ALLOWED", id, k, "컴포넌트 루트는 자기 폭을 조건으로 쓸 수 없다");
+      if (key.bp !== undefined) {
+        const bp = o[key.bp];
+        if (!bp || bp.type !== "breakpoint" || bp.parent !== root)
+          throw new Reject("CONDITION_TARGET_MISSING", id, k, "같은 Frame의 breakpoint가 아니다");
+      }
+      if (key.var) {
+        const cp = o[key.var[0]];
+        if (!cp || cp.type !== "componentProp" || cp.parent !== root || !optionsOf(cp).includes(key.var[1]))
+          throw new Reject("CONDITION_TARGET_MISSING", id, k, "이 컴포넌트의 속성·옵션이 아니다");
+      }
     }
     if (v !== null && !KEYS[type][base].safeParse(v).success) throw new Reject("VALUE_INVALID", id, k, "값 형식이 맞지 않는다");
     if (v !== null && typeof v === "object" && "token" in v) checkBinding(o, id, k, base, (v as { token: string }).token, warnings);
   }
+}
+
+function checkPropValue(o: Objects, id: string, k: string, comp: string, v: unknown) {
+  const cp = o[k.slice(6)];
+  if (!cp || cp.type !== "componentProp" || cp.parent !== comp)
+    throw new Reject("CONDITION_TARGET_MISSING", id, k, "인스턴스 컴포넌트의 속성이 아니다");
+  if (v !== null && !optionsOf(cp).includes(v as string)) throw new Reject("VALUE_INVALID", id, k, "속성의 옵션 값이 아니다");
+}
+
+function checkOverride(o: Objects, id: string, k: string, comp: string, v: unknown, warnings: Warning[]) {
+  const dot = k.indexOf(".", 5);
+  const path = dot < 0 ? [] : k.slice(5, dot).split("/");
+  const base = k.slice(dot + 1);
+  if (!path.length || path.some((s) => !Id.safeParse(s).success)) throw new Reject("KEY_INVALID", id, k, "override 키는 node.<경로>.<키>다");
+  if (base.includes("@")) throw new Reject("CONDITION_NOT_ALLOWED", id, k, "override에는 조건을 붙일 수 없다");
+  const target = overrideTarget(o, comp, path);
+  if (!target) throw new Reject("CONDITION_TARGET_MISSING", id, k, "경로가 가리키는 노드가 없다");
+  const t = o[target];
+  const fixed = OVERRIDE_KEYS[base];
+  const ok = fixed
+    ? (base === "content" && t.type === "text") || ((base === "src" || base === "alt") && t.type === "image") || (base === "hidden" && t.parent !== null)
+    : BIND_TYPE[base] !== undefined && typeof t[base] === "object" && t[base] !== null && "token" in (t[base] as object);
+  if (!ok) throw new Reject("KEY_NOT_ALLOWED", id, k, "인스턴스에서 바꿀 수 없는 키다");
+  if (v === null) return;
+  if (fixed ? !fixed.safeParse(v).success : !(typeof v === "object" && "token" in v)) throw new Reject("VALUE_INVALID", id, k, "값 형식이 맞지 않는다");
+  if (!fixed) checkBinding(o, id, k, base, (v as { token: string }).token, warnings);
 }
 
 function checkBinding(o: Objects, id: string, k: string, base: string, ref: string, warnings: Warning[]) {

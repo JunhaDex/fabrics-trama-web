@@ -165,3 +165,55 @@ describe("토큰 golden", () => {
     await expect(toExport(build(tokens, "frame1")).css).toMatchFileSnapshot("__golden__/tokens.export.css");
   });
 });
+
+describe("컴포넌트 golden", () => {
+  const comps = doc(
+    { op: "create", id: "tkInk01", type: "token", parent: null, props: { name: "color.ink", tokenType: "color", value: rgb(0, 0, 0) } },
+    { op: "create", id: "tkRed01", type: "token", parent: null, props: { name: "color.red", tokenType: "color", value: rgb(1, 0, 0) } },
+    { op: "create", id: "button", type: "component", parent: null, placement: "last",
+      props: { name: "Button", tag: "button", "layout.mode": "flex-row", "layout.gap": px(4), "style.padding-top": px(8), "style.padding-top@state:pressed": px(9) } },
+    { op: "create", id: "tone01", type: "componentProp", parent: "button", props: { name: "tone", kind: "enum", options: ["primary", "danger"], default: "primary" } },
+    { op: "set", id: "button", props: { "style.background-color@var:tone01=danger": rgb(1, 0, 0) } },
+    { op: "create", id: "icon01", type: "componentProp", parent: "button", props: { name: "icon", kind: "boolean", default: "true" } },
+    { op: "create", id: "glyph1", type: "image", parent: "button", placement: "last",
+      props: { src: "i.svg", "size.width": px(16), "hidden@var:icon01=false": true, "size.width@cq:200": px(24) } },
+    { op: "create", id: "label1", type: "text", parent: "button", placement: "last",
+      props: { content: "확인", "style.color": { token: "tkInk01" }, "style.color@state:hover": rgb(0.2, 0.2, 0.2),
+        "style.color@var:tone01=danger@state:hover": rgb(1, 1, 1) } },
+    { op: "create", id: "card01", type: "component", parent: null, placement: "last", props: { name: "Card", "style.padding-top": px(16) } },
+    { op: "create", id: "title1", type: "text", parent: "card01", placement: "last", props: { tag: "h3", content: "카드" } },
+    { op: "create", id: "cta001", type: "instance", parent: "card01", placement: "last",
+      props: { component: "button", "props.tone01": "danger", "node.label1.content": "더보기" } },
+    { op: "create", id: "frame1", type: "frame", parent: null, placement: "last", props: { name: "Components" } },
+    { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", props: { minWidth: 768 } },
+    { op: "create", id: "btn001", type: "instance", parent: "frame1", placement: "last",
+      props: { component: "button", "props.icon01": "false", "node.label1.style.color": { token: "tkRed01" }, "size.width@bp:bp0768": px(200) } },
+    { op: "create", id: "card02", type: "instance", parent: "frame1", placement: "last",
+      props: { component: "card01", "node.title1.content": "<요금>", "node.cta001/glyph1.hidden": true, "node.cta001/label1.content": "구매" } },
+  );
+
+  it("export", async () => {
+    const out = toExport(build(comps, "frame1"));
+    await expect(out.html).toMatchFileSnapshot("__golden__/components.export.html");
+    await expect(out.css).toMatchFileSnapshot("__golden__/components.export.css");
+  });
+
+  it("srcdoc는 인스턴스 안 요소에 경로 data-id를 붙인다", () => {
+    const html = toSrcdoc(build(comps, "frame1"));
+    expect(html).toContain('data-id="card02/cta001/label1"');
+    expect(html).toContain('class="c-card01 n-card02" data-id="card02"');
+  });
+
+  it("컴포넌트 미리보기는 루트에 속성과 상태를 붙이고 상태 선택자가 그 속성에도 반응한다", async () => {
+    const page = build(comps, "button", { preview: { props: { tone01: "danger" }, state: "hover" } });
+    await expect(toSrcdoc(page)).toMatchFileSnapshot("__golden__/components.button.srcdoc.html");
+  });
+
+  it("인스턴스 조각은 컴포넌트 규칙과 그 인스턴스의 override만 담는다", () => {
+    const s = toSnippet(build(comps, "frame1"), "btn001")!;
+    expect(s.css).toContain(".c-button[data-tone=\"danger\"]");
+    expect(s.css).toContain(".n-btn001 .n-label1");
+    expect(s.css).not.toContain("n-card02");
+    expect(s.css).not.toContain(".c-card01");
+  });
+});

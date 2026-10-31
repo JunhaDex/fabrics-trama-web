@@ -136,7 +136,7 @@ describe("트랜잭션", () => {
   });
 
   it("스키마 위반은 SCHEMA_INVALID와 연산 위치를 돌려준다", () => {
-    const r = applyOps(base, { txId: "t", actor: "user:a", ops: [{ op: "delete", id: "box002" }, { op: "detach", id: "box001" }] });
+    const r = applyOps(base, { txId: "t", actor: "user:a", ops: [{ op: "delete", id: "box002" }, { op: "rename", id: "box001" }] });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatchObject({ code: "SCHEMA_INVALID", opIndex: 1 });
     expect(code(base)).toBe("SCHEMA_INVALID");
@@ -293,5 +293,124 @@ describe("token", () => {
     expect(code(withTokens, { op: "set", id: "box001", props: { "style.font-family": "Arial" } })).toBe("VALUE_INVALID");
     expect(code(withTokens, { op: "set", id: "_mode", props: { default: "dark" } })).toBe("STRUCTURE_LOCKED");
     expect(code(withTokens, { op: "create", id: "mode02", type: "modifier", parent: null, props: { name: "mode", contexts: ["a", "b"], default: "a" } })).toBe("NAME_CONFLICT");
+  });
+});
+
+describe("component", () => {
+  const px = (value: number) => ({ value, unit: "px" });
+  const comp = ok(
+    base,
+    { op: "create", id: "button", type: "component", parent: null, placement: "last", props: { name: "Button", tag: "button" } },
+    { op: "create", id: "tone01", type: "componentProp", parent: "button", props: { name: "tone", kind: "enum", options: ["primary", "danger"], default: "primary" } },
+    { op: "create", id: "icon01", type: "componentProp", parent: "button", props: { name: "icon", kind: "boolean", default: "true" } },
+    { op: "create", id: "label1", type: "text", parent: "button", placement: "last", props: { content: "확인" } },
+    { op: "create", id: "glyph1", type: "image", parent: "button", placement: "last", props: { src: "a.svg" } },
+    { op: "create", id: "inst01", type: "instance", parent: "sect01", placement: "last", props: { component: "button", "props.tone01": "danger" } },
+  );
+  const set = (id: string, props: Record<string, unknown>) => code(comp, { op: "set", id, props });
+
+  it("컴포넌트·속성·인스턴스를 만든다", () => {
+    expect(ids(comp, null)).toEqual(["frame1", "button"]);
+    expect(ids(comp, "button")).toEqual(["label1", "glyph1"]);
+    expect(comp.objects.inst01["props.tone01"]).toBe("danger");
+  });
+
+  it("변형·상태·컨테이너 쿼리 조건 키를 검증한다", () => {
+    expect(set("label1", { "style.font-size@var:tone01=danger": px(20), "style.font-size@var:tone01=danger@state:hover": px(22) })).toBeNull();
+    expect(set("glyph1", { "hidden@var:icon01=false": true, "size.width@cq:480": px(32) })).toBeNull();
+    expect(set("button", { "style.padding-top@state:pressed": px(4) })).toBeNull();
+    expect(set("label1", { "style.font-size@state:hover@var:tone01=danger": px(1) })).toBe("KEY_INVALID");
+    expect(set("label1", { "style.font-size@cq:480@var:tone01=danger": px(1) })).toBe("CONDITION_NOT_ALLOWED");
+    expect(set("label1", { "hidden@state:hover": true })).toBe("CONDITION_NOT_ALLOWED");
+    expect(set("glyph1", { "src@var:icon01=false": "b.svg" })).toBe("CONDITION_NOT_ALLOWED");
+    expect(set("button", { "layout.gap@cq:480": px(1) })).toBe("CONDITION_NOT_ALLOWED");
+    expect(set("label1", { "style.font-size@bp:bpinit0768": px(1) })).toBe("CONDITION_NOT_ALLOWED");
+    expect(set("box001", { "style.font-size@var:tone01=danger": px(1) })).toBe("CONDITION_NOT_ALLOWED");
+    expect(set("label1", { "style.font-size@var:tone01=ghost": px(1) })).toBe("CONDITION_TARGET_MISSING");
+  });
+
+  it("componentProp을 검증한다", () => {
+    const cp = (props: object) => code(comp, { op: "create", id: "size01", type: "componentProp", parent: "button", props } as Op);
+    expect(cp({ name: "tone", kind: "boolean", default: "true" })).toBe("NAME_CONFLICT");
+    expect(cp({ name: "size", kind: "enum", default: "sm" })).toBe("VALUE_INVALID");
+    expect(cp({ name: "size", kind: "boolean", options: ["a"], default: "a" })).toBe("VALUE_INVALID");
+    expect(cp({ name: "size", kind: "enum", options: ["sm"], default: "md" })).toBe("VALUE_INVALID");
+    expect(code(comp, { op: "create", id: "size01", type: "componentProp", parent: "label1", props: { name: "s", kind: "boolean", default: "true" } })).toBe("INVALID_PARENT");
+  });
+
+  it("인스턴스 속성과 override를 검증한다", () => {
+    expect(set("inst01", { "props.tone01": "ghost" })).toBe("VALUE_INVALID");
+    expect(set("inst01", { "props.nobody": "x" })).toBe("CONDITION_TARGET_MISSING");
+    expect(set("inst01", { "node.label1.content": "취소", "node.glyph1.hidden": true, "node.glyph1.src": "b.svg" })).toBeNull();
+    expect(set("inst01", { "node.label1.src": "b.svg" })).toBe("KEY_NOT_ALLOWED");
+    expect(set("inst01", { "node.button.hidden": true })).toBe("KEY_NOT_ALLOWED");
+    expect(set("inst01", { "node.label1.style.font-size": px(9) })).toBe("KEY_NOT_ALLOWED");
+    expect(set("inst01", { "node.box001.content": "x" })).toBe("CONDITION_TARGET_MISSING");
+    expect(set("inst01", { "node.label1.content@bp:bpinit0768": "x" })).toBe("CONDITION_NOT_ALLOWED");
+    expect(set("inst01", { component: "button" })).toBe("TYPE_IMMUTABLE");
+  });
+
+  it("토큰 바인딩 override는 원본이 바인딩한 키만 받는다", () => {
+    const doc = ok(
+      comp,
+      { op: "create", id: "tkA001", type: "token", parent: null, props: { name: "a", tokenType: "color", value: { colorSpace: "srgb", components: [0, 0, 0] } } },
+      { op: "create", id: "tkB001", type: "token", parent: null, props: { name: "b", tokenType: "color", value: { colorSpace: "srgb", components: [1, 1, 1] } } },
+      { op: "set", id: "label1", props: { "style.color": { token: "tkA001" } } },
+    );
+    expect(run(doc, { op: "set", id: "inst01", props: { "node.label1.style.color": { token: "tkB001" } } }).ok).toBe(true);
+    expect(code(doc, { op: "set", id: "inst01", props: { "node.label1.style.color": { colorSpace: "srgb", components: [1, 1, 1] } } })).toBe("VALUE_INVALID");
+  });
+
+  it("중첩 인스턴스 경로와 순환을 검증한다", () => {
+    const doc = ok(
+      comp,
+      { op: "create", id: "card01", type: "component", parent: null, placement: "last" },
+      { op: "create", id: "inst02", type: "instance", parent: "card01", placement: "last", props: { component: "button" } },
+      { op: "create", id: "inst03", type: "instance", parent: "box001", placement: "last", props: { component: "card01", "node.inst02/label1.content": "더보기" } },
+    );
+    expect(doc.objects.inst03["node.inst02/label1.content"]).toBe("더보기");
+    expect(code(doc, { op: "create", id: "inst04", type: "instance", parent: "button", placement: "last", props: { component: "card01" } })).toBe("TREE_CYCLE");
+    expect(code(doc, { op: "create", id: "inst04", type: "instance", parent: "card01", placement: "last", props: { component: "card01" } })).toBe("TREE_CYCLE");
+    expect(code(doc, { op: "delete", id: "button" })).toBe("COMPONENT_IN_USE");
+    expect(code(doc, { op: "create", id: "box009", type: "container", parent: "inst01", placement: "last" })).toBe("INVALID_PARENT");
+    const cut = ok(doc, { op: "delete", id: "inst02" });
+    expect("node.inst02/label1.content" in cut.objects.inst03).toBe(false);
+  });
+
+  it("옵션·속성을 지우면 그것을 가리키는 키를 지운다", () => {
+    const a = ok(comp, { op: "set", id: "label1", props: { "style.font-size@var:tone01=danger": px(20), "style.font-size@var:tone01=primary": px(16) } });
+    const b = ok(a, { op: "set", id: "tone01", props: { options: ["primary", "ghost"] } });
+    expect(Object.keys(b.objects.label1)).toContain("style.font-size@var:tone01=primary");
+    expect(Object.keys(b.objects.label1)).not.toContain("style.font-size@var:tone01=danger");
+    expect("props.tone01" in b.objects.inst01).toBe(false);
+    const c = ok(a, { op: "delete", id: "tone01" });
+    expect(Object.keys(c.objects.label1).some((k) => k.includes("@var"))).toBe(false);
+  });
+
+  it("루트를 옮기면 조건 키를 모두 지운다", () => {
+    const a = ok(
+      comp,
+      { op: "set", id: "label1", props: { "style.font-size@var:tone01=danger": px(20), "style.color@state:hover": { colorSpace: "srgb", components: [1, 0, 0] } } },
+      { op: "move", id: "label1", parent: "box001", placement: "last" },
+    );
+    expect(Object.keys(a.objects.label1).some((k) => k.includes("@"))).toBe(false);
+  });
+
+  it("detach는 변형과 override를 굳힌 일반 노드로 바꾼다", () => {
+    const a = ok(
+      comp,
+      { op: "set", id: "label1", props: { "style.font-size": px(14), "style.font-size@var:tone01=danger": px(20), "style.font-size@state:hover": px(30) } },
+      { op: "set", id: "inst01", props: { name: "삭제 버튼", "size.width": "fill", "node.label1.content": "삭제" } },
+      { op: "detach", id: "inst01" },
+    );
+    expect(a.objects.inst01).toBeUndefined();
+    const [rootId, root] = childrenOf(a.objects, "sect01").at(-1)!;
+    expect(rootId).toMatch(/^[0-9A-Za-z]{21}$/);
+    expect(root).toMatchObject({ type: "container", tag: "button", name: "삭제 버튼", "size.width": "fill" });
+    const [[, label], [, glyph]] = childrenOf(a.objects, rootId);
+    expect(label).toEqual({ type: "text", parent: rootId, order: comp.objects.label1.order, content: "삭제", "style.font-size": px(20) });
+    expect(glyph.src).toBe("a.svg");
+    const again = run(a, { op: "set", id: rootId, props: { name: "x" } });
+    expect(again.ok).toBe(true);
   });
 });

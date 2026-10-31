@@ -1,0 +1,81 @@
+*, ::before, ::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --color-ink: #000000;
+  --color-red: #ff0000;
+}
+
+.c-button {
+  column-gap: 4px;
+  container-name: c-button;
+  container-type: inline-size;
+  display: flex;
+  flex-direction: row;
+  padding-top: 8px;
+  row-gap: 4px;
+}
+
+.n-glyph1 {
+  flex-shrink: 0;
+  width: 16px;
+}
+
+.n-label1 {
+  color: var(--color-ink);
+}
+
+.c-button[data-icon="false"] .n-glyph1 {
+  display: none;
+}
+
+.c-button[data-tone="danger"] {
+  background-color: #ff0000;
+}
+
+.c-button:hover .n-label1 {
+  color: #333333;
+}
+
+.c-button:active {
+  padding-top: 9px;
+}
+
+.c-button[data-tone="danger"]:hover .n-label1 {
+  color: #ffffff;
+}
+
+.c-card01 {
+  display: flex;
+  flex-direction: column;
+  padding-top: 16px;
+}
+
+.n-frame1 {
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+}
+
+.n-btn001 .n-label1 {
+  color: var(--color-red);
+}
+
+.n-card02 .n-cta001 .n-glyph1 {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .n-btn001 {
+    width: 200px;
+  }
+}
+
+@container c-button (min-width: 200px) {
+  .n-glyph1 {
+    width: 24px;
+  }
+}
