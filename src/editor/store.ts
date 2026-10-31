@@ -4,7 +4,7 @@ import type { Doc, Op, OpError, Result } from "@/model";
 import { LocalSource } from "./source";
 
 export type View = { x: number; y: number; zoom: number };
-export type Code = { label: string; lang: "html" | "css"; code: string };
+export type Code = { label: string; lang: "html" | "css" | "json"; code: string };
 export type Preview = { title: string; parts: Code[] };
 
 type State = {

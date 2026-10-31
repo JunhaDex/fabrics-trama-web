@@ -5,6 +5,7 @@ import { Trash2 } from "lucide";
 import { useState, type ReactNode } from "react";
 import { modifiersOf, resolveToken, TOKEN_TYPES, tokensOf, type Objects, type TokenType } from "@/model";
 import { hex, ramp, toColor, type Color } from "./color";
+import { fromDtcg, toDtcg } from "./dtcg";
 import { apply, newId, useEditor } from "./store";
 
 const DEFAULT: Record<TokenType, unknown> = {
@@ -42,6 +43,7 @@ export function Tokens() {
   const open = useEditor((s) => s.tokensOpen);
   const error = useEditor((s) => s.error);
   const [sel, setSel] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   return (
     <Dialog
       open={open}
@@ -51,6 +53,15 @@ export function Tokens() {
     >
       <div className="flex max-h-[75vh] flex-col gap-6 overflow-auto text-sm">
         {error && <p className="rounded bg-danger-subtle p-2 text-xs text-on-danger-subtle">{`${error.code}: ${error.message}`}</p>}
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={exportDtcg}>
+            DTCG 내보내기
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => importDtcg(setNote)}>
+            DTCG 가져오기
+          </Button>
+          {note && <span className="text-xs text-on-surface-muted">{note}</span>}
+        </div>
         <Modifiers />
         <Ramp />
         <Table sel={sel} onSelect={setSel} />
@@ -58,6 +69,49 @@ export function Tokens() {
       </div>
     </Dialog>
   );
+}
+
+function exportDtcg() {
+  const { tokens, resolver } = toDtcg(useEditor.getState().doc.objects);
+  const json = (v: unknown) => JSON.stringify(v, null, 2) + "\n";
+  useEditor.setState({
+    tokensOpen: false,
+    preview: {
+      title: "DTCG 내보내기",
+      parts: [
+        { label: "tokens.json", lang: "json", code: json(tokens) },
+        { label: "resolver.json", lang: "json", code: json(resolver) },
+      ],
+    },
+  });
+}
+
+/** tokens.json과 선택적으로 resolver.json을 골라 한 트랜잭션으로 가져온다. resolver는 resolutionOrder가 있는 파일로 구분한다. */
+function importDtcg(setNote: (s: string | null) => void) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "application/json";
+  input.multiple = true;
+  input.hidden = true;
+  document.body.append(input);
+  input.onchange = async () => {
+    input.remove();
+    let files: Record<string, unknown>[];
+    try {
+      files = await Promise.all([...(input.files ?? [])].map(async (f) => JSON.parse(await f.text())));
+    } catch {
+      setNote("JSON 파일이 아니다");
+      return;
+    }
+    const resolver = files.find((f) => "resolutionOrder" in f) ?? null;
+    const tokens = files.find((f) => f !== resolver);
+    if (!tokens) return setNote("tokens.json이 필요하다");
+    const { ops, skipped } = fromDtcg(useEditor.getState().doc.objects, tokens, resolver, newId);
+    if (!ops.length) return setNote("가져올 토큰이 없다");
+    const r = apply(...ops);
+    setNote(r.ok ? `토큰을 가져왔다${skipped.length ? `. 지원하지 않는 타입이라 건너뜀: ${skipped.join(", ")}` : ""}` : null);
+  };
+  input.click();
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
