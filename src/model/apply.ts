@@ -159,6 +159,16 @@ export function tokenValueAt(token: Obj, combo: Record<string, string>): unknown
   return (ctx !== undefined ? token[`value@ctx:${ctx}`] : undefined) ?? token.value;
 }
 
+/** 참조를 따라가 컨텍스트 조합에서의 원시값과 그 값을 가진 토큰 ID를 돌려준다. 순환은 검증 단계에서 막는다. */
+export function resolveToken(objects: Objects, id: string, combo: Record<string, string>): { value: unknown; source: string } {
+  let cur = id;
+  for (;;) {
+    const v = tokenValueAt(objects[cur], combo);
+    if (v && typeof v === "object" && "ref" in v) cur = (v as { ref: string }).ref;
+    else return { value: v, source: cur };
+  }
+}
+
 const modifierOf = (o: Objects, id: string): Obj | undefined => (id === "_mode" ? MODE : o[id]?.type === "modifier" ? o[id] : undefined);
 
 /** Frame의 breakpoint를 minWidth 오름차순으로 돌려준다. */

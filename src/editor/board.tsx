@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
-import { breakpointsOf, childrenOf, type Doc, type Obj } from "@/model";
+import { breakpointsOf, childrenOf, modifiersOf, type Doc, type Obj } from "@/model";
 import { build, toSrcdoc } from "@/render";
 import { dropTarget, type Drop } from "./drop";
 import { frameBox, hit, iframes, rectOf, scan, snapshot, toBoard, type Rect, type Scan } from "./geometry";
@@ -22,6 +22,12 @@ export function Board() {
   const [box, setBox] = useState<Rect | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const heights = useEditor((s) => s.heights);
+  const ctx = useEditor((s) => s.ctx);
+  const attrs = useMemo(() => ctxAttrs(doc, ctx), [doc, ctx]);
+
+  useEffect(() => {
+    for (const el of iframes.values()) applyCtx(el, attrs);
+  }, [attrs]);
   const [ghost, setGhost] = useState<{ rect?: Rect; line?: Rect } | null>(null);
   const frames = childrenOf(doc.objects, null);
 
@@ -149,7 +155,7 @@ export function Board() {
         style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}
       >
         {frames.map(([id, f]) => (
-          <FrameView key={id} id={id} frame={f} doc={doc} onLoad={measure} hair={1 / view.zoom} live={live(id, f)} />
+          <FrameView key={id} id={id} frame={f} doc={doc} onLoad={measure} hair={1 / view.zoom} live={live(id, f)} attrs={attrs} />
         ))}
         {box && <Outline rect={box} width={px} />}
         {ghost?.rect && <Outline rect={ghost.rect} width={px} dashed />}
@@ -164,9 +170,19 @@ export function Board() {
   );
 }
 
-type FrameProps = { id: string; frame: Obj; doc: Doc; onLoad: () => void; hair: number; live: boolean };
+/** 미리보기 컨텍스트를 `<html>`의 data 속성으로 바꾼다. 기본 컨텍스트도 명시해 OS 다크 모드 설정과 무관하게 보인다. */
+function ctxAttrs(doc: Doc, ctx: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(modifiersOf(doc.objects).map(([, m]) => [`data-${m.name}`, ctx[m.name as string] ?? (m.default as string)]));
+}
 
-const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair, live }: FrameProps) {
+function applyCtx(el: HTMLIFrameElement, attrs: Record<string, string>) {
+  const root = el.contentDocument?.documentElement;
+  if (root) for (const [k, v] of Object.entries(attrs)) root.setAttribute(k, v);
+}
+
+type FrameProps = { id: string; frame: Obj; doc: Doc; onLoad: () => void; hair: number; live: boolean; attrs: Record<string, string> };
+
+const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair, live, attrs }: FrameProps) {
   const html = useMemo(() => toSrcdoc(build(doc, id)), [doc, id]);
   const [res, setRes] = useState<Scan | null>(null);
   const observer = useRef<ResizeObserver | null>(null);
@@ -180,6 +196,7 @@ const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair, live }
     const el = iframes.get(id);
     const body = el?.contentDocument?.body;
     if (!el || !body) return;
+    applyCtx(el, attrs);
     const run = () => {
       const cur = frameBox(useEditor.getState().doc.objects[id]);
       const r = scan(el, cur.w >= minWidth);
@@ -193,7 +210,7 @@ const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair, live }
   };
 
   useEffect(() => () => observer.current?.disconnect(), []);
-  const still = useMemo(() => (live ? null : snapshot(html, w, h)), [live, html, w, h]);
+  const still = useMemo(() => (live ? null : snapshot(html, w, h, attrs)), [live, html, w, h, attrs]);
 
   return (
     <div className="absolute" style={{ left: b.x, top: b.y }}>
