@@ -4,13 +4,15 @@ import type { Doc, Op, OpError, Result } from "@/model";
 import { LocalSource } from "./source";
 
 export type View = { x: number; y: number; zoom: number };
+export type Code = { label: string; lang: "html" | "css"; code: string };
+export type Preview = { title: string; parts: Code[] };
 
 type State = {
   doc: Doc;
   selected: string | null;
   view: View;
   error: OpError | null;
-  preview: string | null;
+  preview: Preview | null;
   clipped: Record<string, string[]>;
   heights: Record<string, number>;
 };

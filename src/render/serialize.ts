@@ -1,4 +1,4 @@
-import type { El, Page, Rule } from "./build";
+import type { El, Media, Page, Rule } from "./build";
 
 type Opts = { dataId: boolean; dataLayout: boolean };
 
@@ -19,12 +19,13 @@ function el(e: El, opts: Opts, depth: number): string {
 
 const rule = (r: Rule, pad: string) => `${pad}${r.sel} {\n${r.decls.map(([p, v]) => `${pad}  ${p}: ${v};\n`).join("")}${pad}}\n`;
 
-export function css(page: Page): string {
-  return [
-    ...page.rules.map((r) => rule(r, "")),
-    ...page.media.map((m) => `@media (min-width: ${m.min}px) {\n${m.rules.map((r) => rule(r, "  ")).join("\n")}}\n`),
+const sheet = (rules: Rule[], media: Media[]) =>
+  [
+    ...rules.map((r) => rule(r, "")),
+    ...media.map((m) => `@media (min-width: ${m.min}px) {\n${m.rules.map((r) => rule(r, "  ")).join("\n")}}\n`),
   ].join("\n");
-}
+
+export const css = (page: Page) => sheet(page.rules, page.media);
 
 function html(page: Page, head: string, opts: Opts): string {
   const viewport = `width=device-width, initial-scale=1${page.safeArea ? ", viewport-fit=cover" : ""}`;
@@ -54,6 +55,37 @@ export function toExport(page: Page): { html: string; css: string } {
 /** 내보내기 결과를 한 파일로 보는 미리보기. CSS를 인라인하며 data 속성을 붙이지 않는다. */
 export function toPreview(page: Page): string {
   return html(page, `<style>\n${css(page)}</style>`, { dataId: false, dataLayout: false });
+}
+
+/**
+ * 노드 하나와 그 하위 노드의 HTML·CSS 조각. CSS는 그 노드들의 규칙과 `@media` 규칙만 담고 페이지 전체의 리셋 규칙은 뺀다.
+ * Frame 안에 없는 ID면 null이다.
+ */
+export function toSnippet(page: Page, id: string): { html: string; css: string } | null {
+  const find = (e: El): El | null => {
+    for (const c of e.children) {
+      if (c.id === id || (c.tag === "picture" && c.children.some((x) => x.id === id))) return c;
+      const hit = find(c);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const root = find(page.body);
+  if (!root) return null;
+  const sels = new Set<string>();
+  const walk = (e: El) => {
+    sels.add(e.id ? `.n-${e.id}` : e.tag);
+    e.children.forEach(walk);
+  };
+  walk(root);
+  const keep = (r: Rule) => sels.has(r.sel);
+  return {
+    html: el(root, { dataId: false, dataLayout: false }, 0) + "\n",
+    css: sheet(
+      page.rules.filter(keep),
+      page.media.map((m) => ({ ...m, rules: m.rules.filter(keep) })).filter((m) => m.rules.length),
+    ),
+  };
 }
 
 /** 편집기 iframe의 srcdoc. CSS를 인라인하고 요소마다 data-id를 붙인다. */

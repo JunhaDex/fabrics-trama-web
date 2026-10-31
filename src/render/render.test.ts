@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyOps, type Doc, type Op } from "../model";
-import { build, css, toAnnotated, toExport, toSrcdoc } from ".";
+import { build, css, toAnnotated, toExport, toSnippet, toSrcdoc } from ".";
 
 function doc(...ops: Op[]): Doc {
   const r = applyOps({ schemaVersion: 1, objects: {} }, { txId: "tx1", actor: "user:test", ops });
@@ -112,5 +112,34 @@ describe("반응형 golden", () => {
 
   it("BP가 없으면 @media를 내지 않는다", () => {
     expect(css(build(pricing, "frame1"))).not.toContain("@media");
+  });
+});
+
+describe("snippet", () => {
+  const resp = build(
+    doc(
+      { op: "create", id: "frame1", type: "frame", parent: null, placement: "last" },
+      { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", props: { minWidth: 768 } },
+      { op: "create", id: "side01", type: "container", parent: "frame1", placement: "last", props: { "style.padding-top": px(8) } },
+      { op: "create", id: "main01", type: "container", parent: "frame1", placement: "last", props: { "layout.gap": px(4), "layout.gap@bp:bp0768": px(16) } },
+      { op: "create", id: "head01", type: "text", parent: "main01", placement: "last", props: { content: "제목", "hidden@bp:bp0768": true } },
+      { op: "create", id: "hero01", type: "image", parent: "main01", placement: "last", props: { src: "s.jpg", "src@bp:bp0768": "m.jpg" } },
+    ),
+    "frame1",
+  );
+
+  it("선택한 노드와 하위 노드만 담는다", async () => {
+    const s = toSnippet(resp, "main01")!;
+    await expect(s.html + "\n" + s.css).toMatchFileSnapshot("__golden__/snippet.main01.txt");
+    expect(s.css).not.toContain("n-side01");
+    expect(s.css).not.toContain("box-sizing");
+  });
+
+  it("picture 안의 img를 고르면 picture째 담는다", () => {
+    expect(toSnippet(resp, "hero01")!.html).toMatch(/^<picture>/);
+  });
+
+  it("없는 ID는 null이다", () => {
+    expect(toSnippet(resp, "nobody")).toBeNull();
   });
 });

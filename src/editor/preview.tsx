@@ -4,55 +4,62 @@ import { Button, Dialog, Icon } from "@junhadex/core";
 import { Check, Copy } from "lucide";
 import { useEffect, useState } from "react";
 import { codeToHtml } from "shiki/bundle/web";
-import { useEditor } from "./store";
+import { useEditor, type Code } from "./store";
 
 export function Preview() {
-  const code = useEditor((s) => s.preview);
+  const preview = useEditor((s) => s.preview);
   return (
     <Dialog
-      open={code !== null}
+      open={preview !== null}
       onOpenChange={(open) => !open && useEditor.setState({ preview: null })}
-      title="HTML 미리보기"
+      title={preview?.title ?? ""}
       className="w-[min(90vw,960px)] max-w-none"
     >
-      {code !== null && <Code key={code} code={code} />}
+      {preview && (
+        <div className="flex flex-col gap-4">
+          {preview.parts.map((p) => (
+            <Block key={p.label + p.code} part={p} />
+          ))}
+        </div>
+      )}
     </Dialog>
   );
 }
 
-function Code({ code }: { code: string }) {
+function Block({ part }: { part: Code }) {
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let live = true;
-    codeToHtml(code, { lang: "html", theme: "github-light" }).then((h) => live && setHtml(h));
+    codeToHtml(part.code, { lang: part.lang, theme: "github-light" }).then((h) => live && setHtml(h));
     return () => {
       live = false;
     };
-  }, [code]);
+  }, [part]);
 
   const copy = async () => {
-    await navigator.clipboard.writeText(code);
+    await navigator.clipboard.writeText(part.code);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex justify-end">
+    <section className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">{part.label}</h3>
         <Button size="sm" variant="secondary" onClick={copy}>
-          <Icon node={copied ? Check : Copy} /> {copied ? "복사됨" : "코드 복사"}
+          <Icon node={copied ? Check : Copy} /> {copied ? "복사됨" : `${part.label} 복사`}
         </Button>
       </div>
-      <div className="max-h-[60vh] overflow-auto rounded border border-border text-xs [&_pre]:p-3">
+      <div className="max-h-[40vh] overflow-auto rounded border border-border text-xs [&_pre]:p-3">
         {html ? (
           // shiki가 코드 문자열을 이스케이프한 마크업이다.
           <div dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
-          <pre>{code}</pre>
+          <pre>{part.code}</pre>
         )}
       </div>
-    </div>
+    </section>
   );
 }
