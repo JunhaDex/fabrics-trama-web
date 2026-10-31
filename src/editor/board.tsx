@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEv
 import { breakpointsOf, childrenOf, type Doc, type Obj } from "@/model";
 import { build, toSrcdoc } from "@/render";
 import { dropTarget, type Drop } from "./drop";
-import { frameBox, hit, iframes, rectOf, toBoard, type Rect } from "./geometry";
+import { frameBox, hit, iframes, rectOf, scan, toBoard, type Rect, type Scan } from "./geometry";
 import { activeBp, effective, writeAll } from "./bp";
 import { apply, select, useEditor } from "./store";
 import { isTyping } from "./keys";
@@ -126,7 +126,7 @@ export function Board() {
         style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}
       >
         {frames.map(([id, f]) => (
-          <FrameView key={id} id={id} frame={f} doc={doc} onLoad={measure} />
+          <FrameView key={id} id={id} frame={f} doc={doc} onLoad={measure} hair={1 / view.zoom} />
         ))}
         {box && <Outline rect={box} width={px} />}
         {ghost?.rect && <Outline rect={ghost.rect} width={px} dashed />}
@@ -141,9 +141,36 @@ export function Board() {
   );
 }
 
-const FrameView = memo(function FrameView({ id, frame, doc, onLoad }: { id: string; frame: Obj; doc: Doc; onLoad: () => void }) {
+type FrameProps = { id: string; frame: Obj; doc: Doc; onLoad: () => void; hair: number };
+
+const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair }: FrameProps) {
   const html = useMemo(() => toSrcdoc(build(doc, id)), [doc, id]);
+  const [res, setRes] = useState<Scan | null>(null);
+  const observer = useRef<ResizeObserver | null>(null);
   const b = frameBox(frame);
+  const minWidth = (frame.minWidth as number) ?? 320;
+  // 미리보기가 minWidth보다 좁아도 그 구간에는 BP가 없으므로, minWidth 폭으로 그려도 출력이 같다.
+  const w = Math.max(b.w, minWidth);
+  const h = Math.max(b.h, res?.contentH ?? 0);
+
+  const load = () => {
+    const el = iframes.get(id);
+    const body = el?.contentDocument?.body;
+    if (!el || !body) return;
+    const run = () => {
+      const cur = frameBox(useEditor.getState().doc.objects[id]);
+      const r = scan(el, cur.w >= minWidth);
+      setRes(r);
+      useEditor.setState((s) => ({ clipped: { ...s.clipped, [id]: r?.clipped ?? [] } }));
+      onLoad();
+    };
+    observer.current?.disconnect();
+    observer.current = new ResizeObserver(run);
+    observer.current.observe(body);
+  };
+
+  useEffect(() => () => observer.current?.disconnect(), []);
+
   return (
     <div className="absolute" style={{ left: b.x, top: b.y }}>
       <FrameBar id={id} frame={frame} doc={doc} />
@@ -156,10 +183,29 @@ const FrameView = memo(function FrameView({ id, frame, doc, onLoad }: { id: stri
         title={(frame.name as string) ?? id}
         srcDoc={html}
         sandbox="allow-same-origin"
-        onLoad={onLoad}
+        onLoad={load}
         className="pointer-events-none block border-0"
-        style={{ width: b.w, height: b.h, background: "#fff" }}
+        style={{ width: w, height: h, background: "#fff" }}
       />
+      {h > b.h && (
+        <div
+          className="pointer-events-none absolute left-0"
+          style={{ top: b.h, width: w, height: h - b.h, background: "rgb(0 0 0 / 0.06)", borderTop: `${hair}px dashed rgb(0 0 0 / 0.45)` }}
+        />
+      )}
+      {b.w < minWidth && (
+        <div
+          className="pointer-events-none absolute top-0"
+          style={{ left: b.w, width: minWidth - b.w, height: h, background: "rgb(128 128 128 / 0.12)", outline: `${hair}px dashed rgb(128 128 128 / 0.8)` }}
+        />
+      )}
+      {res?.over.map(({ id: oid, r }) => (
+        <div
+          key={oid}
+          className="pointer-events-none absolute"
+          style={{ left: r.x, top: r.y, width: r.w, height: r.h, outline: `${2 * hair}px solid rgb(220 38 38)` }}
+        />
+      ))}
     </div>
   );
 });

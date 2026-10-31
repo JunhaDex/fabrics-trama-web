@@ -110,6 +110,7 @@ function Layer({ doc, id, sel, depth }: { doc: Doc; id: string; sel: string | nu
   const label = (o.name as string) || (type === "text" ? (o.content as string) : "") || LABEL[type];
   const bp = activeBp(doc, frameOf(doc.objects, id));
   const hidden = effective(doc, id).hidden === true;
+  const clipped = useEditor((s) => s.clipped[frameOf(doc.objects, id)]?.includes(id));
   return (
     <li role="treeitem" aria-selected={id === sel} aria-expanded={kids.length ? true : undefined}>
       <button
@@ -120,6 +121,11 @@ function Layer({ doc, id, sel, depth }: { doc: Doc; id: string; sel: string | nu
       >
         <span className="text-xs text-on-surface-muted">{LABEL[type][0]}</span>
         <span className="truncate">{label}</span>
+        {clipped && (
+          <span className="rounded bg-warning-subtle px-1 text-xs text-on-warning-subtle" title="clip이 자식을 자르고 있음">
+            clip
+          </span>
+        )}
         {hidden && (
           <span className="ml-auto flex items-center gap-1 text-xs text-on-surface-muted" title="현재 BP에서 숨김">
             <Icon node={EyeOff} />

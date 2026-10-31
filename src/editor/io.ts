@@ -1,4 +1,4 @@
-import { applyOps, childrenOf, frameOf, type Doc, type Objects, type Op, type Result } from "@/model";
+import { applyOps, breakpointsOf, childrenOf, frameOf, type Doc, type Objects, type Op, type Result } from "@/model";
 import { build, toPreview } from "@/render";
 import { source, useEditor } from "./store";
 
@@ -43,10 +43,13 @@ export function importJson() {
 
 function rebuild(objects: Objects): Result {
   const ops: Op[] = [];
+  const props = (o: Objects[string]) => Object.fromEntries(Object.entries(o).filter(([k]) => !["type", "parent", "order"].includes(k)));
   const walk = (parent: string | null) => {
     for (const [id, o] of childrenOf(objects, parent)) {
-      const props = Object.fromEntries(Object.entries(o).filter(([k]) => !["type", "parent", "order"].includes(k)));
-      ops.push({ op: "create", id, type: o.type, parent, placement: "last", props });
+      ops.push({ op: "create", id, type: o.type, parent, placement: "last", props: props(o) });
+      // 자식의 @bp 키가 BP를 가리키므로 Frame을 만든 직후 BP를 먼저 만든다.
+      if (parent === null)
+        for (const [bid, bp] of breakpointsOf(objects, id)) ops.push({ op: "create", id: bid, type: "breakpoint", parent: id, props: props(bp) });
       walk(id);
     }
   };

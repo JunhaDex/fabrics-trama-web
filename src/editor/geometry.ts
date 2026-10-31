@@ -44,14 +44,40 @@ export const toBoard = (view: View, box: DOMRect, cx: number, cy: number) => ({
   y: (cy - box.top - view.y) / view.zoom,
 });
 
+export type Scan = { contentH: number; over: { id: string; r: Rect }[]; clipped: string[] };
+
+/**
+ * Frame의 렌더 결과를 검사한다. contentH는 내용 높이, clipped는 clip으로 자식을 자르고 있는 노드다.
+ * over는 부모 밖으로 가로로 넘친 노드이며, 미리보기 폭이 minWidth 이상일 때만 검사한다(그보다 좁으면 넘침이 의도된 것이다).
+ */
+export function scan(el: HTMLIFrameElement, checkOver: boolean): Scan | null {
+  const d = el.contentDocument;
+  const win = d?.defaultView;
+  if (!d?.body || !win) return null;
+  const out: Scan = { contentH: Math.ceil(d.body.getBoundingClientRect().bottom), over: [], clipped: [] };
+  for (const e of d.querySelectorAll<HTMLElement>("[data-id]")) {
+    const id = e.dataset.id!;
+    const s = win.getComputedStyle(e);
+    if (s.overflowX === "hidden" && (e.scrollWidth > e.clientWidth || e.scrollHeight > e.clientHeight)) out.clipped.push(id);
+    if (!checkOver || e === d.body || s.position === "absolute" || s.display === "none") continue;
+    const p = e.parentElement?.closest<HTMLElement>("[data-id]");
+    if (!p || win.getComputedStyle(p).overflowX === "hidden") continue;
+    const r = e.getBoundingClientRect();
+    const pr = p.getBoundingClientRect();
+    if (r.right > pr.right + 0.5 || r.left < pr.left - 0.5) out.over.push({ id, r: { x: r.left, y: r.top, w: r.width, h: r.height } });
+  }
+  return out;
+}
+
 /** 보드 좌표 아래에 있는 가장 안쪽 노드. Frame 밖이면 null이다. */
 export function hit(frames: [string, Obj][], x: number, y: number) {
   for (const [fid, o] of [...frames].reverse()) {
     const f = frameBox(o);
+    const frame = iframes.get(fid);
     const lx = x - f.x;
     const ly = y - f.y;
-    if (lx < 0 || ly < 0 || lx > f.w || ly > f.h) continue;
-    const el = iframes.get(fid)?.contentDocument?.elementFromPoint(lx, ly)?.closest("[data-id]");
+    if (lx < 0 || ly < 0 || lx > (frame?.offsetWidth ?? f.w) || ly > (frame?.offsetHeight ?? f.h)) continue;
+    const el = frame?.contentDocument?.elementFromPoint(lx, ly)?.closest("[data-id]");
     return { frame: fid, id: el?.getAttribute("data-id") ?? fid };
   }
   return null;
