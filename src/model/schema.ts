@@ -27,6 +27,8 @@ const size = z.union([z.enum(["fill", "hug"]), Dimension]);
 
 export const NODE_TYPES = ["frame", "section", "container", "text", "image"] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
+export const OBJ_TYPES = [...NODE_TYPES, "breakpoint"] as const;
+export type ObjType = (typeof OBJ_TYPES)[number];
 
 const common = {
   name: z.string(),
@@ -82,7 +84,11 @@ const box = {
 
 const tag = (tags: [string, ...string[]]) => ({ tag: z.enum(tags) });
 
-export const KEYS: Record<NodeType, Record<string, z.ZodType>> = {
+export const KEYS: Record<ObjType, Record<string, z.ZodType>> = {
+  breakpoint: {
+    name: z.string(),
+    minWidth: z.number().int().positive(),
+  },
   frame: {
     ...common,
     ...layout,
@@ -130,7 +136,13 @@ export const KEYS: Record<NodeType, Record<string, z.ZodType>> = {
   },
 };
 
-export const PARENTS: Record<NodeType, (NodeType | null)[]> = {
+/** 키가 `@bp:` 조건을 받을 수 있는지. 구조·텍스트 키와 position은 모든 BP에 같아야 하므로 받지 않는다. */
+export function bpAllowed(key: string) {
+  return /^(layout|size|grid|style)\./.test(key) || ["x", "y", "w", "h", "hidden", "src"].includes(key);
+}
+
+export const PARENTS: Record<ObjType, (ObjType | null)[]> = {
+  breakpoint: ["frame"],
   frame: [null],
   section: ["frame"],
   container: ["frame", "section", "container"],
@@ -150,9 +162,9 @@ export const Op = z.discriminatedUnion("op", [
   z.strictObject({
     op: z.literal("create"),
     id: Id,
-    type: z.enum(NODE_TYPES),
+    type: z.enum(OBJ_TYPES),
     parent: Id.nullable(),
-    placement: Placement,
+    placement: Placement.optional(),
     props: Props.optional(),
   }),
   z.strictObject({ op: z.literal("set"), id: Id, props: Props }),

@@ -100,8 +100,9 @@ export function Layers() {
 
 function Layer({ doc, id, sel, depth }: { doc: Doc; id: string; sel: string | null; depth: number }) {
   const o = doc.objects[id];
+  const type = o.type as NodeType;
   const kids = childrenOf(doc.objects, id);
-  const label = (o.name as string) || (o.type === "text" ? (o.content as string) : "") || LABEL[o.type];
+  const label = (o.name as string) || (type === "text" ? (o.content as string) : "") || LABEL[type];
   return (
     <li role="treeitem" aria-selected={id === sel} aria-expanded={kids.length ? true : undefined}>
       <button
@@ -110,7 +111,7 @@ function Layer({ doc, id, sel, depth }: { doc: Doc; id: string; sel: string | nu
         className={`flex w-full items-center gap-2 truncate py-1 pr-2 text-left hover:bg-surface-raised ${id === sel ? "bg-brand-subtle text-on-brand-subtle" : ""} ${o.hidden ? "text-on-surface-muted" : ""}`}
         style={{ paddingLeft: 8 + depth * 12 }}
       >
-        <span className="text-xs text-on-surface-muted">{LABEL[o.type][0]}</span>
+        <span className="text-xs text-on-surface-muted">{LABEL[type][0]}</span>
         <span className="truncate">{label}</span>
       </button>
       {kids.length > 0 && (

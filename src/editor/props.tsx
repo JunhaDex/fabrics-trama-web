@@ -31,7 +31,7 @@ export function Props() {
   const id = useEditor((s) => s.selected);
   if (!id) return <p className="p-3 text-sm text-on-surface-muted">노드를 선택하세요</p>;
   const o = doc.objects[id];
-  const t = o.type;
+  const t = o.type as NodeType;
   const has = (k: string) => Object.hasOwn(KEYS[t], k);
   const v = (k: string) => o[k];
   const parentMode = o.parent ? ((doc.objects[o.parent]["layout.mode"] as string) ?? "flex-column") : null;

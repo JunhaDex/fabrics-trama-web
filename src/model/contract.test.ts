@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { applyOps, type Doc, type Op } from ".";
-import { KEYS, NODE_TYPES, Tx } from "./schema";
+import { KEYS, OBJ_TYPES, Tx } from "./schema";
 
 // 계약 파일은 메타 저장소에 있다. `vitest run -u`로 다시 생성하고 diff를 검토한다.
 const DIR = "../../../../docs/architecture/";
@@ -10,14 +10,14 @@ const strip = (s: Record<string, unknown>) => Object.fromEntries(Object.entries(
 
 describe("JSON Schema", () => {
   it("trama-ops.schema.json", async () => {
-    const props = (t: (typeof NODE_TYPES)[number]) =>
+    const props = (t: (typeof OBJ_TYPES)[number]) =>
       z.strictObject(Object.fromEntries(Object.entries(KEYS[t]).map(([k, s]) => [k, s.nullable()]))).partial();
     const schema = {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       $id: "trama-ops.schema.json",
       $defs: {
         Transaction: strip(z.toJSONSchema(Tx)),
-        ...Object.fromEntries(NODE_TYPES.map((t) => [`${t}Props`, strip(z.toJSONSchema(props(t)))])),
+        ...Object.fromEntries(OBJ_TYPES.map((t) => [`${t}Props`, strip(z.toJSONSchema(props(t)))])),
       },
     };
     await expect(JSON.stringify(schema, null, 2) + "\n").toMatchFileSnapshot(DIR + "trama-ops.schema.json");
@@ -39,7 +39,7 @@ const base: Doc = {
 };
 
 const create = (id: string, type: string, parent: string | null, placement: unknown, props?: object) =>
-  ({ op: "create", id, type, parent, placement, ...(props && { props }) }) as Op;
+  ({ op: "create", id, type, parent, ...(placement !== undefined && { placement }), ...(props && { props }) }) as Op;
 
 const GROUPS: Record<string, Case[]> = {
   create: [
@@ -68,7 +68,7 @@ const GROUPS: Record<string, Case[]> = {
     { name: "절대 배치", doc: base, ops: [{ op: "set", id: "box002", props: { position: "absolute", x: -4, y: 12.25, w: 100, h: 0 } }] },
     { name: "type 변경", doc: base, ops: [{ op: "set", id: "box001", props: { type: "text" } }] },
     { name: "parent는 move로", doc: base, ops: [{ op: "set", id: "box001", props: { parent: "frame1" } }] },
-    { name: "조건 키는 아직 허용하지 않는다", doc: base, ops: [{ op: "set", id: "box001", props: { "layout.gap@bp:bp0001": { value: 4, unit: "px" } } }] },
+    { name: "없는 BP를 가리키는 조건 키", doc: base, ops: [{ op: "set", id: "box001", props: { "layout.gap@bp:bp0001": { value: 4, unit: "px" } } }] },
     { name: "소수 다섯째 자리", doc: base, ops: [{ op: "set", id: "box001", props: { "size.width": { value: 1.23456, unit: "px" } } }] },
     { name: "frame에는 position이 없다", doc: base, ops: [{ op: "set", id: "frame1", props: { position: "absolute" } }] },
     { name: "없는 객체", doc: base, ops: [{ op: "set", id: "nobody", props: { name: "x" } }] },
@@ -80,6 +80,31 @@ const GROUPS: Record<string, Case[]> = {
     { name: "기준 노드가 형제가 아님", doc: base, ops: [{ op: "move", id: "txt001", parent: "sect01", placement: { after: "box002" } }] },
     { name: "기준 노드가 자기 자신", doc: base, ops: [{ op: "move", id: "txt001", parent: "sect01", placement: { after: "txt001" } }] },
     { name: "없는 기준 노드", doc: base, ops: [{ op: "move", id: "txt001", parent: "sect01", placement: { before: "nobody" } }] },
+  ],
+  breakpoint: [
+    { name: "BP 생성과 override", doc: base, ops: [
+      { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", props: { name: "Tablet", minWidth: 768 } },
+      { op: "set", id: "box001", props: { "layout.mode@bp:bp0768": "flex-row", "hidden@bp:bp0768": true } },
+    ] },
+    { name: "BP에 placement", doc: base, ops: [{ op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", placement: "last", props: { minWidth: 768 } }] },
+    { name: "노드에 placement 없음", doc: base, ops: [create("box003", "container", "sect01", undefined)] },
+    { name: "minWidth 없는 BP", doc: base, ops: [{ op: "create", id: "bp0768", type: "breakpoint", parent: "frame1" }] },
+    { name: "Frame minWidth 이하 BP", doc: base, ops: [{ op: "create", id: "bp0300", type: "breakpoint", parent: "frame1", props: { minWidth: 320 } }] },
+    { name: "같은 minWidth BP", doc: base, ops: [
+      { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", props: { minWidth: 768 } },
+      { op: "create", id: "bp0769", type: "breakpoint", parent: "frame1", props: { minWidth: 768 } },
+    ] },
+    { name: "BP를 받지 않는 키", doc: base, ops: [
+      { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", props: { minWidth: 768 } },
+      { op: "set", id: "txt001", props: { "content@bp:bp0768": "x" } },
+    ] },
+    { name: "조건 문법 오류", doc: base, ops: [{ op: "set", id: "box001", props: { "hidden@bp:x": true } }] },
+    { name: "@state 조건", doc: base, ops: [{ op: "set", id: "box001", props: { "hidden@state:hover": true } }] },
+    { name: "BP 삭제 시 override 정리", doc: base, ops: [
+      { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", props: { minWidth: 768 } },
+      { op: "set", id: "box001", props: { "hidden@bp:bp0768": true } },
+      { op: "delete", id: "bp0768" },
+    ] },
   ],
   delete: [{ name: "하위 노드를 함께 삭제", doc: base, ops: [{ op: "delete", id: "box001" }] }],
   transaction: [

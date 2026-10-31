@@ -85,7 +85,6 @@ describe("set", () => {
     expect(code(base, { op: "set", id: "box001", props: { type: "text" } })).toBe("TYPE_IMMUTABLE");
     expect(code(base, { op: "set", id: "box001", props: { content: "x" } })).toBe("KEY_NOT_ALLOWED");
     expect(code(base, { op: "set", id: "box001", props: { parent: "frame1" } })).toBe("KEY_NOT_ALLOWED");
-    expect(code(base, { op: "set", id: "box001", props: { "style.color@bp:bp1": "x" } })).toBe("KEY_NOT_ALLOWED");
     expect(code(base, { op: "set", id: "box001", props: { toString: 1 } })).toBe("KEY_NOT_ALLOWED");
     expect(code(base, { op: "set", id: "box001", props: { "layout.mode": "block" } })).toBe("VALUE_INVALID");
     expect(code(base, { op: "set", id: "box001", props: { "layout.mode": "absolute" } })).toBe("VALUE_INVALID");
@@ -141,6 +140,59 @@ describe("트랜잭션", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatchObject({ code: "SCHEMA_INVALID", opIndex: 1 });
     expect(code(base)).toBe("SCHEMA_INVALID");
+  });
+});
+
+describe("breakpoint", () => {
+  const withBp = ok(
+    base,
+    { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", props: { name: "Tablet", minWidth: 768 } },
+  );
+  const gap = { value: 8, unit: "px" };
+
+  it("BP를 만들고 그 BP의 override를 설정한다", () => {
+    const doc = ok(withBp, { op: "set", id: "box001", props: { "layout.gap@bp:bp0768": gap, "hidden@bp:bp0768": true } });
+    expect(doc.objects.box001["layout.gap@bp:bp0768"]).toEqual(gap);
+    expect(childrenOf(doc.objects, "frame1").map(([id]) => id)).toEqual(["sect01"]);
+  });
+
+  it("조건 키를 검증한다", () => {
+    const set = (k: string, v: unknown = gap) => code(withBp, { op: "set", id: "box001", props: { [k]: v } });
+    expect(set("layout.gap@bp:bp1")).toBe("KEY_INVALID");
+    expect(set("layout.gap@bp:bp0768@bp:bp0768")).toBe("KEY_INVALID");
+    expect(set("layout.gap@state:hover")).toBe("CONDITION_NOT_ALLOWED");
+    expect(set("content@bp:bp0768", "x")).toBe("KEY_NOT_ALLOWED");
+    expect(set("tag@bp:bp0768", "ul")).toBe("CONDITION_NOT_ALLOWED");
+    expect(set("position@bp:bp0768", "absolute")).toBe("CONDITION_NOT_ALLOWED");
+    expect(set("layout.gap@bp:nobody")).toBe("CONDITION_TARGET_MISSING");
+    expect(set("layout.gap@bp:bp0768", "8px")).toBe("VALUE_INVALID");
+  });
+
+  it("BP minWidth는 Frame 안에서 유일하고 Frame minWidth보다 크다", () => {
+    const bp = (id: string, minWidth: number) => ({ op: "create", id, type: "breakpoint", parent: "frame1", props: { minWidth } }) as Op;
+    expect(code(withBp, bp("bp0769", 768))).toBe("VALUE_INVALID");
+    expect(code(base, bp("bp0300", 300))).toBe("VALUE_INVALID");
+    expect(code(withBp, { op: "set", id: "frame1", props: { minWidth: 800 } })).toBe("VALUE_INVALID");
+    expect(code(base, { op: "create", id: "bp0000", type: "breakpoint", parent: "frame1" })).toBe("VALUE_INVALID");
+    expect(code(base, { op: "create", id: "bp0768", type: "breakpoint", parent: "sect01", props: { minWidth: 768 } })).toBe("INVALID_PARENT");
+    expect(code(base, { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", placement: "last", props: { minWidth: 768 } })).toBe("VALUE_INVALID");
+    expect(code(base, { op: "create", id: "box003", type: "container", parent: "sect01" })).toBe("VALUE_INVALID");
+  });
+
+  it("BP를 지우면 그 BP의 override도 지운다", () => {
+    const a = ok(withBp, { op: "set", id: "box001", props: { "layout.gap@bp:bp0768": gap, name: "A" } });
+    const b = ok(a, { op: "delete", id: "bp0768" });
+    expect(b.objects.box001).toEqual({ ...base.objects.box001, name: "A" });
+  });
+
+  it("다른 Frame으로 옮기면 원래 Frame의 override를 지운다", () => {
+    const a = ok(
+      withBp,
+      { op: "set", id: "box002", props: { "layout.gap@bp:bp0768": gap } },
+      { op: "create", id: "frame2", type: "frame", parent: null, placement: "last" },
+      { op: "move", id: "box001", parent: "frame2", placement: "last" },
+    );
+    expect("layout.gap@bp:bp0768" in a.objects.box002).toBe(false);
   });
 });
 
