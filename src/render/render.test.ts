@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyOps, type Doc, type Op } from "../model";
-import { build, css, toAnnotated, toExport, toSrcdoc } from ".";
+import { build, css, toAnnotated, toExport, toSnippet, toSrcdoc } from ".";
 
 function doc(...ops: Op[]): Doc {
   const r = applyOps({ schemaVersion: 1, objects: {} }, { txId: "tx1", actor: "user:test", ops });
@@ -76,5 +76,70 @@ describe("결정성", () => {
       { op: "create", id: "box001", type: "container", parent: "frame1", placement: "last" },
     );
     expect(css(build(explicit, "frame1"))).toBe(css(build(implicit, "frame1")));
+  });
+});
+
+describe("반응형 golden", () => {
+  const rem = (value: number) => ({ value, unit: "rem" });
+  const resp = doc(
+    { op: "create", id: "frame1", type: "frame", parent: null, placement: "last", props: { name: "Responsive" } },
+    { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", props: { name: "Tablet", minWidth: 768 } },
+    { op: "create", id: "bp1280", type: "breakpoint", parent: "frame1", props: { name: "Desktop", minWidth: 1280 } },
+    { op: "create", id: "row001", type: "section", parent: "frame1", placement: "last",
+      props: { "layout.mode@bp:bp0768": "flex-row", "layout.gap": px(8), "layout.gap@bp:bp1280": px(24) } },
+    { op: "create", id: "side01", type: "container", parent: "row001", placement: "last", props: { "size.width@bp:bp0768": px(240) } },
+    { op: "create", id: "main01", type: "container", parent: "row001", placement: "last", props: { "size.width@bp:bp0768": "fill" } },
+    { op: "create", id: "head01", type: "text", parent: "main01", placement: "last",
+      props: { content: "제목", "style.font-size": rem(1.25), "style.font-size@bp:bp1280": rem(2) } },
+    { op: "create", id: "note01", type: "text", parent: "main01", placement: "last",
+      props: { content: "데스크톱 전용", hidden: true, "hidden@bp:bp1280": false } },
+    { op: "create", id: "tabl01", type: "text", parent: "main01", placement: "last",
+      props: { content: "태블릿 전용", "hidden@bp:bp0768": true } },
+    { op: "create", id: "hero01", type: "image", parent: "main01", placement: "last",
+      props: { src: "s.jpg", alt: "히어로", "src@bp:bp0768": "m.jpg", "src@bp:bp1280": "l.jpg" } },
+  );
+  const page = build(resp, "frame1");
+
+  it("export", async () => {
+    const out = toExport(page);
+    await expect(out.html).toMatchFileSnapshot("__golden__/responsive.export.html");
+    await expect(out.css).toMatchFileSnapshot("__golden__/responsive.export.css");
+  });
+
+  it("srcdoc", async () => {
+    await expect(toSrcdoc(page)).toMatchFileSnapshot("__golden__/responsive.srcdoc.html");
+  });
+
+  it("BP가 없으면 @media를 내지 않는다", () => {
+    expect(css(build(pricing, "frame1"))).not.toContain("@media");
+  });
+});
+
+describe("snippet", () => {
+  const resp = build(
+    doc(
+      { op: "create", id: "frame1", type: "frame", parent: null, placement: "last" },
+      { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", props: { minWidth: 768 } },
+      { op: "create", id: "side01", type: "container", parent: "frame1", placement: "last", props: { "style.padding-top": px(8) } },
+      { op: "create", id: "main01", type: "container", parent: "frame1", placement: "last", props: { "layout.gap": px(4), "layout.gap@bp:bp0768": px(16) } },
+      { op: "create", id: "head01", type: "text", parent: "main01", placement: "last", props: { content: "제목", "hidden@bp:bp0768": true } },
+      { op: "create", id: "hero01", type: "image", parent: "main01", placement: "last", props: { src: "s.jpg", "src@bp:bp0768": "m.jpg" } },
+    ),
+    "frame1",
+  );
+
+  it("선택한 노드와 하위 노드만 담는다", async () => {
+    const s = toSnippet(resp, "main01")!;
+    await expect(s.html + "\n" + s.css).toMatchFileSnapshot("__golden__/snippet.main01.txt");
+    expect(s.css).not.toContain("n-side01");
+    expect(s.css).not.toContain("box-sizing");
+  });
+
+  it("picture 안의 img를 고르면 picture째 담는다", () => {
+    expect(toSnippet(resp, "hero01")!.html).toMatch(/^<picture>/);
+  });
+
+  it("없는 ID는 null이다", () => {
+    expect(toSnippet(resp, "nobody")).toBeNull();
   });
 });

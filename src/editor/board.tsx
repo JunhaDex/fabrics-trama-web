@@ -1,10 +1,11 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
-import { childrenOf, type Doc, type Obj } from "@/model";
+import { breakpointsOf, childrenOf, type Doc, type Obj } from "@/model";
 import { build, toSrcdoc } from "@/render";
 import { dropTarget, type Drop } from "./drop";
-import { frameBox, hit, iframes, rectOf, toBoard, type Rect } from "./geometry";
+import { frameBox, hit, iframes, rectOf, scan, snapshot, toBoard, type Rect, type Scan } from "./geometry";
+import { activeBp, effective, writeAll } from "./bp";
 import { apply, select, useEditor } from "./store";
 import { isTyping } from "./keys";
 
@@ -19,6 +20,8 @@ export function Board() {
   const drag = useRef<Drag | null>(null);
   const space = useRef(false);
   const [box, setBox] = useState<Rect | null>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const heights = useEditor((s) => s.heights);
   const [ghost, setGhost] = useState<{ rect?: Rect; line?: Rect } | null>(null);
   const frames = childrenOf(doc.objects, null);
 
@@ -28,6 +31,27 @@ export function Board() {
   }, []);
 
   useEffect(() => useEditor.subscribe((s, p) => s.selected !== p.selected && measure()), [measure]);
+
+  useEffect(() => {
+    const el = ref.current!;
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const live = (id: string, f: Obj) => {
+    if (!size.w) return true;
+    if (view.zoom < 0.25) return false;
+    const b = frameBox(f);
+    const m = 200 / view.zoom;
+    const x0 = -view.x / view.zoom - m;
+    const y0 = -view.y / view.zoom - m;
+    const x1 = (size.w - view.x) / view.zoom + m;
+    const y1 = (size.h - view.y) / view.zoom + m;
+    const w = Math.max(b.w, (f.minWidth as number) ?? 320);
+    const h = Math.max(b.h, heights[id] ?? 0);
+    return b.x < x1 && b.x + w > x0 && b.y < y1 && b.y + h > y0;
+  };
 
   useEffect(() => {
     const el = ref.current!;
@@ -90,7 +114,7 @@ export function Board() {
     d.dy = p.y - d.sy;
     if (!d.moved && Math.hypot(d.dx, d.dy) * view.zoom < 4) return;
     d.moved = true;
-    if (doc.objects[d.id].position === "absolute") {
+    if (effective(doc, d.id).position === "absolute") {
       setGhost(d.origin && { rect: { ...d.origin, x: d.origin.x + d.dx, y: d.origin.y + d.dy } });
       return;
     }
@@ -105,10 +129,10 @@ export function Board() {
     drag.current = null;
     setGhost(null);
     if (d?.kind !== "node" || !d.moved) return;
-    const o = doc.objects[d.id];
-    if (o.position === "absolute")
-      apply({ op: "set", id: d.id, props: { x: Math.round(((o.x as number) ?? 0) + d.dx), y: Math.round(((o.y as number) ?? 0) + d.dy) } });
-    else if (d.drop) apply({ op: "move", id: d.id, parent: d.drop.parent, placement: d.drop.placement });
+    const o = effective(doc, d.id);
+    if (o.position === "absolute") {
+      writeAll(d.id, { x: Math.round(((o.x as number) ?? 0) + d.dx), y: Math.round(((o.y as number) ?? 0) + d.dy) });
+    } else if (d.drop) apply({ op: "move", id: d.id, parent: d.drop.parent, placement: d.drop.placement });
   };
 
   const px = 2 / view.zoom;
@@ -125,7 +149,7 @@ export function Board() {
         style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}
       >
         {frames.map(([id, f]) => (
-          <FrameView key={id} id={id} frame={f} doc={doc} onLoad={measure} />
+          <FrameView key={id} id={id} frame={f} doc={doc} onLoad={measure} hair={1 / view.zoom} live={live(id, f)} />
         ))}
         {box && <Outline rect={box} width={px} />}
         {ghost?.rect && <Outline rect={ghost.rect} width={px} dashed />}
@@ -140,28 +164,128 @@ export function Board() {
   );
 }
 
-const FrameView = memo(function FrameView({ id, frame, doc, onLoad }: { id: string; frame: Obj; doc: Doc; onLoad: () => void }) {
+type FrameProps = { id: string; frame: Obj; doc: Doc; onLoad: () => void; hair: number; live: boolean };
+
+const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair, live }: FrameProps) {
   const html = useMemo(() => toSrcdoc(build(doc, id)), [doc, id]);
+  const [res, setRes] = useState<Scan | null>(null);
+  const observer = useRef<ResizeObserver | null>(null);
   const b = frameBox(frame);
+  const minWidth = (frame.minWidth as number) ?? 320;
+  // 미리보기가 minWidth보다 좁아도 그 구간에는 BP가 없으므로, minWidth 폭으로 그려도 출력이 같다.
+  const w = Math.max(b.w, minWidth);
+  const h = Math.max(b.h, res?.contentH ?? 0);
+
+  const load = () => {
+    const el = iframes.get(id);
+    const body = el?.contentDocument?.body;
+    if (!el || !body) return;
+    const run = () => {
+      const cur = frameBox(useEditor.getState().doc.objects[id]);
+      const r = scan(el, cur.w >= minWidth);
+      setRes(r);
+      useEditor.setState((s) => ({ clipped: { ...s.clipped, [id]: r?.clipped ?? [] }, heights: { ...s.heights, [id]: r?.contentH ?? 0 } }));
+      onLoad();
+    };
+    observer.current?.disconnect();
+    observer.current = new ResizeObserver(run);
+    observer.current.observe(body);
+  };
+
+  useEffect(() => () => observer.current?.disconnect(), []);
+  const still = useMemo(() => (live ? null : snapshot(html, w, h)), [live, html, w, h]);
+
   return (
     <div className="absolute" style={{ left: b.x, top: b.y }}>
-      <div className="absolute bottom-full mb-1 whitespace-nowrap text-xs text-on-surface-muted">{(frame.name as string) ?? ""}</div>
-      <iframe
-        ref={(el) => {
-          if (!el) return;
-          iframes.set(id, el);
-          return () => void iframes.delete(id);
-        }}
-        title={(frame.name as string) ?? id}
-        srcDoc={html}
-        sandbox="allow-same-origin"
-        onLoad={onLoad}
-        className="pointer-events-none block border-0"
-        style={{ width: b.w, height: b.h, background: "#fff" }}
-      />
+      <FrameBar id={id} frame={frame} doc={doc} />
+      {still ? (
+        // eslint-disable-next-line @next/next/no-img-element -- data URL 스냅샷이라 next/image 최적화가 필요 없다.
+        <img src={still} alt="" className="pointer-events-none block max-w-none" style={{ width: w, height: h, background: "#fff" }} />
+      ) : (
+        <iframe
+          ref={(el) => {
+            if (!el) return;
+            iframes.set(id, el);
+            return () => void iframes.delete(id);
+          }}
+          title={(frame.name as string) ?? id}
+          srcDoc={html}
+          sandbox="allow-same-origin"
+          onLoad={load}
+          className="pointer-events-none block border-0"
+          style={{ width: w, height: h, background: "#fff" }}
+        />
+      )}
+      {h > b.h && (
+        <div
+          className="pointer-events-none absolute left-0"
+          style={{ top: b.h, width: w, height: h - b.h, background: "rgb(0 0 0 / 0.06)", borderTop: `${hair}px dashed rgb(0 0 0 / 0.45)` }}
+        />
+      )}
+      {b.w < minWidth && (
+        <div
+          className="pointer-events-none absolute top-0"
+          style={{ left: b.w, width: minWidth - b.w, height: h, background: "rgb(128 128 128 / 0.12)", outline: `${hair}px dashed rgb(128 128 128 / 0.8)` }}
+        />
+      )}
+      {res?.over.map(({ id: oid, r }) => (
+        <div
+          key={oid}
+          className="pointer-events-none absolute"
+          style={{ left: r.x, top: r.y, width: r.w, height: r.h, outline: `${2 * hair}px solid rgb(220 38 38)` }}
+        />
+      ))}
     </div>
   );
 });
+
+const drawnWidth = (f: Obj) => Math.max(frameBox(f).w, (f.minWidth as number) ?? 320);
+
+/** Frame 미리보기 폭을 바꾸고, 오른쪽에 있으면서 세로로 겹치는 Frame을 폭 변화만큼 함께 옮긴다. */
+function resizeFrame(doc: Doc, id: string, width: number) {
+  const f = doc.objects[id];
+  const b = frameBox(f);
+  const delta = Math.max(width, (f.minWidth as number) ?? 320) - drawnWidth(f);
+  const { heights } = useEditor.getState();
+  const bottom = (fid: string, o: Obj) => frameBox(o).y + Math.max(frameBox(o).h, heights[fid] ?? 0);
+  const shifted = delta
+    ? childrenOf(doc.objects, null).filter(([oid, o]) => {
+        const ob = frameBox(o);
+        return oid !== id && ob.x >= b.x + drawnWidth(f) && ob.y < bottom(id, f) && bottom(oid, o) > b.y;
+      })
+    : [];
+  apply(
+    { op: "set", id, props: { previewWidth: width } },
+    ...shifted.map(([oid, o]) => ({ op: "set" as const, id: oid, props: { boardX: frameBox(o).x + delta } })),
+  );
+}
+
+function FrameBar({ id, frame, doc }: { id: string; frame: Obj; doc: Doc }) {
+  const active = activeBp(doc, id);
+  const minWidth = (frame.minWidth as number) ?? 320;
+  const tabs: [string | null, string, number][] = [
+    [null, (frame.baseLabel as string) ?? "Mobile", Math.max(390, minWidth)],
+    ...breakpointsOf(doc.objects, id).map(([bid, bp]): [string, string, number] => [bid, (bp.name as string) || "BP", bp.minWidth as number]),
+  ];
+  return (
+    <div
+      className="absolute bottom-full mb-1 flex items-center gap-2 whitespace-nowrap text-xs"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <span className="text-on-surface-muted">{(frame.name as string) ?? ""}</span>
+      {tabs.map(([bid, name, width]) => (
+        <button
+          key={bid ?? "base"}
+          type="button"
+          onClick={() => resizeFrame(doc, id, width)}
+          className={`rounded px-1.5 py-0.5 ${bid === active ? "bg-brand text-on-brand" : "text-on-surface-muted hover:bg-surface-raised"}`}
+        >
+          {name} {bid && <span className="opacity-70">{width}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function Outline({ rect, width, dashed }: { rect: Rect; width: number; dashed?: boolean }) {
   return (

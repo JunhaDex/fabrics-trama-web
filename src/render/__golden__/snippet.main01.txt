@@ -1,0 +1,29 @@
+<div class="n-main01">
+  <p class="n-head01">제목</p>
+  <picture>
+    <source media="(min-width: 768px)" srcset="m.jpg">
+    <img class="n-hero01" src="s.jpg" alt="">
+  </picture>
+</div>
+
+picture {
+  display: contents;
+}
+
+.n-main01 {
+  column-gap: 4px;
+  display: flex;
+  flex-direction: column;
+  row-gap: 4px;
+}
+
+@media (min-width: 768px) {
+  .n-main01 {
+    column-gap: 16px;
+    row-gap: 16px;
+  }
+
+  .n-head01 {
+    display: none;
+  }
+}

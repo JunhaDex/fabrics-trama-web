@@ -1,12 +1,13 @@
 "use client";
 
 import { Button, Icon, Input, Select, Switch, Textarea } from "@junhadex/core";
-import { X } from "lucide";
+import { RotateCcw, Trash2, X } from "lucide";
 import { useId, type ReactNode } from "react";
 import { z } from "zod";
-import { KEYS, type Doc, type NodeType } from "@/model";
+import { breakpointsOf, frameOf, KEYS, type Doc, type NodeType } from "@/model";
+import { activeBp, effective, overridden, write } from "./bp";
 import { localRect } from "./geometry";
-import { apply, useEditor } from "./store";
+import { apply, newId, useEditor } from "./store";
 
 type Dim = { value: number; unit: string };
 type Color = { colorSpace: "srgb"; components: [number, number, number]; alpha?: number };
@@ -30,48 +31,56 @@ export function Props() {
   const doc = useEditor((s) => s.doc);
   const id = useEditor((s) => s.selected);
   if (!id) return <p className="p-3 text-sm text-on-surface-muted">노드를 선택하세요</p>;
-  const o = doc.objects[id];
-  const t = o.type;
+  const o = effective(doc, id);
+  const t = o.type as NodeType;
   const has = (k: string) => Object.hasOwn(KEYS[t], k);
   const v = (k: string) => o[k];
-  const parentMode = o.parent ? ((doc.objects[o.parent]["layout.mode"] as string) ?? "flex-column") : null;
+  const f = (k: string) => ({ id, k, value: o[k], reset: overridden(doc, id, k) ? () => write(id, k, null) : undefined });
+  const parentMode = o.parent ? ((effective(doc, o.parent)["layout.mode"] as string) ?? "flex-column") : null;
+  const bp = activeBp(doc, frameOf(doc.objects, id));
   const mode = (v("layout.mode") as string) ?? "flex-column";
   const abs = v("position") === "absolute";
 
   return (
     <div key={id} className="flex flex-col gap-4 overflow-auto p-3 text-sm">
+      {bp && (
+        <p className="rounded bg-brand-subtle p-2 text-xs text-on-brand-subtle">
+          현재 BP: {(doc.objects[bp].name as string) || "BP"} ({doc.objects[bp].minWidth as number}px 이상). 레이아웃·스타일·숨김은 이 BP의
+          override로 저장되고, 이름·태그·내용·position 편집은 모든 BP에 적용됩니다.
+        </p>
+      )}
       <Group title="노드">
-        <Text id={id} k="name" value={v("name")} label="이름" />
-        {has("tag") && <Choice id={id} k="tag" value={v("tag")} opts={options(t, "tag")} def={DEFAULT_TAG[t]!} label="태그" />}
-        <Toggle id={id} k="hidden" value={v("hidden")} label="숨김" />
-        {t === "text" && <Text id={id} k="content" value={v("content")} label="내용" multiline />}
+        <Text {...f("name")} label="이름" />
+        {has("tag") && <Choice {...f("tag")} opts={options(t, "tag")} def={DEFAULT_TAG[t]!} label="태그" />}
+        <Toggle {...f("hidden")} label="숨김" />
+        {t === "text" && <Text {...f("content")} label="내용" multiline />}
         {t === "image" && (
           <>
-            <Text id={id} k="src" value={v("src")} label="src" />
-            <Text id={id} k="alt" value={v("alt")} label="alt" />
-            <Choice id={id} k="style.object-fit" value={v("style.object-fit")} opts={options(t, "style.object-fit")} def="fill" label="맞춤" />
+            <Text {...f("src")} label="src" />
+            <Text {...f("alt")} label="alt" />
+            <Choice {...f("style.object-fit")} opts={options(t, "style.object-fit")} def="fill" label="맞춤" />
           </>
         )}
       </Group>
 
       <Group title="스타일">
-        {has("style.background-color") && <ColorField id={id} k="style.background-color" value={v("style.background-color")} label="배경" />}
+        {has("style.background-color") && <ColorField {...f("style.background-color")} label="배경" />}
         {has("style.color") && (
           <>
-            <ColorField id={id} k="style.color" value={v("style.color")} label="글자색" />
-            <Num id={id} k="style.font-size" value={v("style.font-size")} label="글자 크기" dim />
-            <Choice id={id} k="style.font-weight" value={v("style.font-weight")?.toString()} opts={WEIGHTS} def="400" label="굵기" num />
+            <ColorField {...f("style.color")} label="글자색" />
+            <Num {...f("style.font-size")} label="글자 크기" dim />
+            <Choice {...f("style.font-weight")} opts={WEIGHTS} def="400" label="굵기" num />
           </>
         )}
         {has("style.padding-top") && (
           <>
             {(["top", "right", "bottom", "left"] as const).map((s) => (
-              <Num key={s} id={id} k={`style.padding-${s}`} value={v(`style.padding-${s}`)} label={`padding ${s}`} dim />
+              <Num key={s} {...f(`style.padding-${s}`)} label={`padding ${s}`} dim />
             ))}
-            <Num id={id} k="style.border-width" value={v("style.border-width")} label="테두리 두께" dim />
-            <Choice id={id} k="style.border-style" value={v("style.border-style")} opts={options(t, "style.border-style")} def="none" label="테두리 모양" />
-            <ColorField id={id} k="style.border-color" value={v("style.border-color")} label="테두리 색" />
-            <Num id={id} k="style.border-radius" value={v("style.border-radius")} label="모서리" dim />
+            <Num {...f("style.border-width")} label="테두리 두께" dim />
+            <Choice {...f("style.border-style")} opts={options(t, "style.border-style")} def="none" label="테두리 모양" />
+            <ColorField {...f("style.border-color")} label="테두리 색" />
+            <Num {...f("style.border-radius")} label="모서리" dim />
           </>
         )}
       </Group>
@@ -79,22 +88,23 @@ export function Props() {
       {t === "frame" && (
         <Group title="Frame">
           {(["boardX", "boardY", "previewWidth", "previewHeight", "minWidth"] as const).map((k) => (
-            <Num key={k} id={id} k={k} value={v(k)} label={k} />
+            <Num key={k} {...f(k)} label={k} />
           ))}
-          <Toggle id={id} k="safeArea" value={v("safeArea")} label="safe area" />
+          <Toggle {...f("safeArea")} label="safe area" />
+          <Breakpoints doc={doc} frame={id} />
         </Group>
       )}
 
       {has("layout.mode") && (
         <Group title="레이아웃">
-          <Choice id={id} k="layout.mode" value={v("layout.mode")} opts={options(t, "layout.mode")} def="flex-column" label="모드" />
-          <Num id={id} k="layout.gap" value={v("layout.gap")} label="gap" dim />
-          <Num id={id} k="layout.rowGap" value={v("layout.rowGap")} label="row gap" dim />
-          <Choice id={id} k="layout.justify" value={v("layout.justify")} opts={options(t, "layout.justify")} def="start" label="justify" />
-          <Choice id={id} k="layout.align" value={v("layout.align")} opts={options(t, "layout.align")} def="stretch" label="align" />
-          {mode !== "grid" && <Toggle id={id} k="layout.wrap" value={v("layout.wrap")} label="wrap" />}
-          {mode === "grid" && <Num id={id} k="layout.columns" value={v("layout.columns")} label="열 수" />}
-          <Toggle id={id} k="layout.clip" value={v("layout.clip")} label="clip" />
+          <Choice {...f("layout.mode")} opts={options(t, "layout.mode")} def="flex-column" label="모드" />
+          <Num {...f("layout.gap")} label="gap" dim />
+          <Num {...f("layout.rowGap")} label="row gap" dim />
+          <Choice {...f("layout.justify")} opts={options(t, "layout.justify")} def="start" label="justify" />
+          <Choice {...f("layout.align")} opts={options(t, "layout.align")} def="stretch" label="align" />
+          {mode !== "grid" && <Toggle {...f("layout.wrap")} label="wrap" />}
+          {mode === "grid" && <Num {...f("layout.columns")} label="열 수" />}
+          <Toggle {...f("layout.clip")} label="clip" />
         </Group>
       )}
 
@@ -112,17 +122,17 @@ export function Props() {
             )}
           </Row>
           {abs ? (
-            (["x", "y", "w", "h"] as const).map((k) => <Num key={k} id={id} k={k} value={v(k)} label={k} />)
+            (["x", "y", "w", "h"] as const).map((k) => <Num key={k} {...f(k)} label={k} />)
           ) : (
             <>
-              <Size id={id} k="size.width" value={v("size.width")} def={parentMode === "flex-row" ? "hug" : "fill"} label="폭" />
-              <Size id={id} k="size.height" value={v("size.height")} def={parentMode === "flex-column" ? "hug" : "fill"} label="높이" />
+              <Size {...f("size.width")} def={parentMode === "flex-row" ? "hug" : "fill"} label="폭" />
+              <Size {...f("size.height")} def={parentMode === "flex-column" ? "hug" : "fill"} label="높이" />
               {(["minWidth", "maxWidth", "minHeight", "maxHeight"] as const).map((k) => (
-                <Num key={k} id={id} k={`size.${k}`} value={v(`size.${k}`)} label={k} dim />
+                <Num key={k} {...f(`size.${k}`)} label={k} dim />
               ))}
               {parentMode === "grid" &&
                 (["colStart", "colSpan", "rowStart", "rowSpan"] as const).map((k) => (
-                  <Num key={k} id={id} k={`grid.${k}`} value={v(`grid.${k}`)} label={k} />
+                  <Num key={k} {...f(`grid.${k}`)} label={k} />
                 ))}
             </>
           )}
@@ -147,24 +157,31 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function Row({ label, children }: { label: string; children: (id: string) => ReactNode }) {
+function Row({ label, reset, children }: { label: string; reset?: () => void; children: (id: string) => ReactNode }) {
   const rid = useId();
   return (
     <div className="grid grid-cols-[88px_1fr] items-center gap-2">
-      <label htmlFor={rid} className="truncate text-xs">
-        {label}
-      </label>
+      <div className="flex min-w-0 items-center gap-1">
+        <label htmlFor={rid} className={`truncate text-xs ${reset ? "font-semibold text-brand" : ""}`}>
+          {label}
+        </label>
+        {reset && (
+          <button type="button" aria-label={`${label} override 해제`} title="이 BP의 override 해제" onClick={reset} className="text-brand">
+            <Icon node={RotateCcw} size={12} />
+          </button>
+        )}
+      </div>
       {children(rid)}
     </div>
   );
 }
 
-type FieldProps = { id: string; k: string; value: unknown; label: string };
+type FieldProps = { id: string; k: string; value: unknown; label: string; reset?: () => void };
 
-function Text({ id, k, value, label, multiline }: FieldProps & { multiline?: boolean }) {
-  const commit = (s: string) => s !== (value ?? "") && set(id, { [k]: s || null });
+function Text({ id, k, value, label, reset, multiline }: FieldProps & { multiline?: boolean }) {
+  const commit = (s: string) => s !== (value ?? "") && write(id, k, s || null);
   return (
-    <Row label={label}>
+    <Row label={label} reset={reset}>
       {(rid) =>
         multiline ? (
           <Textarea key={String(value)} id={rid} size="sm" defaultValue={(value as string) ?? ""} onBlur={(e) => commit(e.target.value)} />
@@ -183,15 +200,15 @@ function Text({ id, k, value, label, multiline }: FieldProps & { multiline?: boo
   );
 }
 
-function Num({ id, k, value, label, dim }: FieldProps & { dim?: boolean }) {
+function Num({ id, k, value, label, reset, dim }: FieldProps & { dim?: boolean }) {
   const n = dim ? (value as Dim | undefined)?.value : (value as number | undefined);
   const commit = (s: string) => {
     if (s === String(n ?? "")) return;
     const x = s === "" ? null : Number(s);
-    set(id, { [k]: x === null ? null : dim ? { value: x, unit: "px" } : x });
+    write(id, k, x === null ? null : dim ? { value: x, unit: "px" } : x);
   };
   return (
-    <Row label={label}>
+    <Row label={label} reset={reset}>
       {(rid) => (
         <Input
           key={String(n)}
@@ -209,10 +226,10 @@ function Num({ id, k, value, label, dim }: FieldProps & { dim?: boolean }) {
 
 const WEIGHTS = ["100", "200", "300", "400", "500", "600", "700", "800", "900"];
 
-function ColorField({ id, k, value, label }: FieldProps) {
+function ColorField({ id, k, value, label, reset }: FieldProps) {
   const c = value as Color | undefined;
   return (
-    <Row label={label}>
+    <Row label={label} reset={reset}>
       {(rid) => (
         <div className="flex items-center gap-2">
           <input
@@ -223,7 +240,7 @@ function ColorField({ id, k, value, label }: FieldProps) {
             ref={(el) => {
               if (!el) return;
               // React의 onChange는 드래그 중에도 계속 발생하므로, 선택을 마칠 때 한 번 오는 네이티브 change를 쓴다.
-              const commit = () => (!c || el.value !== hex(c)) && set(id, { [k]: toColor(el.value) });
+              const commit = () => (!c || el.value !== hex(c)) && write(id, k, toColor(el.value));
               el.addEventListener("change", commit);
               return () => el.removeEventListener("change", commit);
             }}
@@ -231,7 +248,7 @@ function ColorField({ id, k, value, label }: FieldProps) {
           />
           <span className="flex-1 text-xs text-on-surface-muted">{c ? hex(c) : "없음"}</span>
           {c && (
-            <Button size="sm" variant="ghost" aria-label={`${label} 지우기`} onClick={() => set(id, { [k]: null })}>
+            <Button size="sm" variant="ghost" aria-label={`${label} 지우기`} onClick={() => write(id, k, null)}>
               <Icon node={X} />
             </Button>
           )}
@@ -241,46 +258,86 @@ function ColorField({ id, k, value, label }: FieldProps) {
   );
 }
 
-function Choice({ id, k, value, label, opts, def, num }: FieldProps & { opts: string[]; def: string; num?: boolean }) {
+function Choice({ id, k, value, label, reset, opts, def, num }: FieldProps & { opts: string[]; def: string; num?: boolean }) {
   return (
-    <Row label={label}>
+    <Row label={label} reset={reset}>
       {(rid) => (
         <Select
           id={rid}
           size="sm"
           options={opts.map((o) => ({ value: o, label: o }))}
-          value={(value as string) ?? def}
-          onValueChange={(o) => set(id, { [k]: o === def ? null : num ? Number(o) : o })}
+          value={value === undefined ? def : String(value)}
+          onValueChange={(o) => write(id, k, num ? Number(o) : o, num ? Number(def) : def)}
         />
       )}
     </Row>
   );
 }
 
-function Toggle({ id, k, value, label }: FieldProps) {
+function Toggle({ id, k, value, label, reset }: FieldProps) {
   return (
-    <Row label={label}>
-      {(rid) => <Switch id={rid} checked={value === true} onCheckedChange={(on) => set(id, { [k]: on || null })} />}
+    <Row label={label} reset={reset}>
+      {(rid) => <Switch id={rid} checked={value === true} onCheckedChange={(on) => write(id, k, on, false)} />}
     </Row>
   );
 }
 
-function Size({ id, k, value, label, def }: FieldProps & { def: "fill" | "hug" }) {
+function Size({ id, k, value, label, reset, def }: FieldProps & { def: "fill" | "hug" }) {
   const kind = typeof value === "object" && value ? "fixed" : ((value as string) ?? def);
   return (
     <>
-      <Row label={label}>
+      <Row label={label} reset={reset}>
         {(rid) => (
           <Select
             id={rid}
             size="sm"
             options={["fill", "hug", "fixed"].map((o) => ({ value: o, label: o }))}
             value={kind}
-            onValueChange={(o) => set(id, { [k]: o === "fixed" ? { value: 100, unit: "px" } : o === def ? null : o })}
+            onValueChange={(o) => write(id, k, o === "fixed" ? { value: 100, unit: "px" } : o, def)}
           />
         )}
       </Row>
       {kind === "fixed" && <Num id={id} k={k} value={value} label={`${label} (px)`} dim />}
     </>
+  );
+}
+
+function Breakpoints({ doc, frame }: { doc: Doc; frame: string }) {
+  const bps = breakpointsOf(doc.objects, frame);
+  const add = () => {
+    const last = (bps.at(-1)?.[1].minWidth as number | undefined) ?? (doc.objects[frame].minWidth as number) ?? 320;
+    apply({ op: "create", id: newId(), type: "breakpoint", parent: frame, props: { name: "BP", minWidth: last + 256 } });
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-on-surface-muted">Breakpoint</span>
+        <Button size="sm" variant="ghost" onClick={add}>
+          + BP
+        </Button>
+      </div>
+      {bps.map(([bid, bp]) => (
+        <div key={bid} className="grid grid-cols-[1fr_88px_auto] items-center gap-1">
+          <Input
+            key={`n${bp.name}`}
+            size="sm"
+            aria-label="BP 이름"
+            defaultValue={(bp.name as string) ?? ""}
+            onBlur={(e) => e.target.value !== (bp.name ?? "") && set(bid, { name: e.target.value || null })}
+          />
+          <Input
+            key={`w${bp.minWidth}`}
+            size="sm"
+            type="number"
+            aria-label="BP 최소 폭"
+            defaultValue={bp.minWidth as number}
+            onBlur={(e) => Number(e.target.value) !== bp.minWidth && set(bid, { minWidth: Number(e.target.value) })}
+          />
+          <Button size="sm" variant="ghost" aria-label="BP 삭제" onClick={() => apply({ op: "delete", id: bid })}>
+            <Icon node={Trash2} />
+          </Button>
+        </div>
+      ))}
+    </div>
   );
 }

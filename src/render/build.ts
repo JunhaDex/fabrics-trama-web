@@ -1,4 +1,4 @@
-import { childrenOf, type Doc, type Obj } from "../model";
+import { breakpointsOf, childrenOf, type Doc, type Obj } from "../model";
 
 export type Decl = [prop: string, value: string];
 export type Rule = { sel: string; decls: Decl[] };
@@ -10,7 +10,8 @@ export type El = {
   text: string | null;
   children: El[];
 };
-export type Page = { title: string; safeArea: boolean; body: El; rules: Rule[] };
+export type Media = { min: number; rules: Rule[] };
+export type Page = { title: string; safeArea: boolean; body: El; rules: Rule[]; media: Media[] };
 
 type Dim = { value: number; unit: string };
 type Size = "fill" | "hug" | Dim;
@@ -48,35 +49,89 @@ function value(v: unknown): string {
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 
 export function build(doc: Doc, frameId: string): Page {
-  const rules: Rule[] = [RESET];
-  const visit = (id: string, o: Obj, parent: Obj | null): El => {
-    const kids = childrenOf(doc.objects, id);
-    const decls = [...(hasLayout(o) ? layoutDecls(o) : []), ...(parent ? childDecls(o, parent) : frameDecls(o))];
-    // absolute 노드는 그 자체로 기준 상자가 되므로 relative를 덧붙이지 않는다.
-    if (o.position !== "absolute" && kids.some(([, c]) => c.position === "absolute"))
-      decls.push(["position", "relative"]);
-    for (const [k, v] of Object.entries(o)) if (k.startsWith("style.")) decls.push([k.slice(6), value(v)]);
-    if (o.hidden) {
-      const i = decls.findIndex(([p]) => p === "display");
-      if (i >= 0) decls.splice(i, 1);
-      decls.push(["display", "none"]);
+  const bps = breakpointsOf(doc.objects, frameId).map(([id, o]) => ({ id, min: o.minWidth as number }));
+  const order: string[] = [];
+  const cache = new Map<string, Obj>();
+
+  // state -1은 base, i는 bps[0..i]의 override까지 적용한 상태다.
+  const at = (id: string, state: number): Obj => {
+    const key = `${id}|${state}`;
+    let o = cache.get(key);
+    if (!o) {
+      const src = doc.objects[id];
+      o = Object.fromEntries(Object.entries(src).filter(([k]) => !k.includes("@"))) as Obj;
+      for (let i = 0; i <= state; i++)
+        for (const [k, v] of Object.entries(src)) if (k.endsWith(`@bp:${bps[i].id}`)) o[k.slice(0, k.indexOf("@"))] = v;
+      cache.set(key, o);
     }
-    if (decls.length) rules.push({ sel: `.n-${id}`, decls: decls.sort(([a], [b]) => (a < b ? -1 : 1)) });
+    return o;
+  };
+
+  const declsAt = (id: string, state: number): Map<string, string> => {
+    const o = at(id, state);
+    const parent = o.parent === null ? null : at(o.parent, state);
+    const kids = childrenOf(doc.objects, id);
+    const d = [...(hasLayout(o) ? layoutDecls(o) : []), ...(parent ? childDecls(o, parent) : frameDecls(o))];
+    // absolute 노드는 그 자체로 기준 상자가 되므로 relative를 덧붙이지 않는다.
+    if (o.position !== "absolute" && kids.some(([cid]) => at(cid, state).position === "absolute")) d.push(["position", "relative"]);
+    for (const [k, v] of Object.entries(o)) if (k.startsWith("style.")) d.push([k.slice(6), value(v)]);
+    const m = new Map(d);
+    if (o.hidden) m.set("display", "none");
+    return m;
+  };
+
+  const visit = (id: string, o: Obj, isBody: boolean): El => {
+    order.push(id);
+    const kids = childrenOf(doc.objects, id);
     const attrs: [string, string][] = [["class", `n-${id}`]];
     if (o.type === "image") attrs.push(["src", (o.src as string) ?? ""], ["alt", (o.alt as string) ?? ""]);
-    return {
+    const el: El = {
       id,
-      tag: parent ? ((o.tag as string) ?? DEFAULT_TAG[o.type]) : "body",
+      tag: isBody ? "body" : ((o.tag as string) ?? DEFAULT_TAG[o.type]),
       attrs,
       layout: hasLayout(o) ? mode(o) : null,
       text: o.type === "text" ? ((o.content as string) ?? "") : null,
-      children: kids.map(([cid, c]) => visit(cid, c, o)),
+      children: kids.map(([cid, c]) => visit(cid, c, false)),
     };
+    const sources = [...bps].reverse().flatMap(({ id: bp, min }) => {
+      const src = o[`src@bp:${bp}`];
+      return src === undefined ? [] : [wrap("source", [["media", `(min-width: ${min}px)`], ["srcset", src as string]])];
+    });
+    return sources.length ? wrap("picture", [], [...sources, el]) : el;
   };
+
   const frame = doc.objects[frameId];
-  const body = visit(frameId, frame, null);
-  return { title: (frame.name as string) ?? "", safeArea: frame.safeArea === true, body, rules };
+  const body = visit(frameId, frame, true);
+  const sorted = (m: Map<string, string>): Decl[] => [...m].sort(([a], [b]) => (a < b ? -1 : 1));
+  const rules: Rule[] = [RESET];
+  if (Object.values(doc.objects).some((o) => Object.keys(o).some((k) => k.startsWith("src@bp:"))))
+    rules.push({ sel: "picture", decls: [["display", "contents"]] });
+  for (const id of order) {
+    const d = declsAt(id, -1);
+    if (d.size) rules.push({ sel: `.n-${id}`, decls: sorted(d) });
+  }
+  const media = bps.flatMap(({ min }, i): Media[] => {
+    const changed: Rule[] = [];
+    for (const id of order) {
+      const prev = declsAt(id, i - 1);
+      const next = declsAt(id, i);
+      const d = new Map([...next].filter(([p, v]) => prev.get(p) !== v));
+      for (const p of prev.keys()) if (!next.has(p)) d.set(p, "revert");
+      if (d.size) changed.push({ sel: `.n-${id}`, decls: sorted(d) });
+    }
+    return changed.length ? [{ min, rules: changed }] : [];
+  });
+  return { title: (frame.name as string) ?? "", safeArea: frame.safeArea === true, body, rules, media };
 }
+
+const wrap = (tag: string, attrs: [string, string][], children: El[] = []): El => ({
+  id: "",
+  tag,
+  attrs,
+  layout: null,
+  text: null,
+  children,
+});
 
 const hasLayout = (o: Obj) => o.type === "frame" || o.type === "section" || o.type === "container";
 const mode = (o: Obj) => (o["layout.mode"] as string) ?? "flex-column";

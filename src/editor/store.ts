@@ -4,13 +4,17 @@ import type { Doc, Op, OpError, Result } from "@/model";
 import { LocalSource } from "./source";
 
 export type View = { x: number; y: number; zoom: number };
+export type Code = { label: string; lang: "html" | "css"; code: string };
+export type Preview = { title: string; parts: Code[] };
 
 type State = {
   doc: Doc;
   selected: string | null;
   view: View;
   error: OpError | null;
-  preview: string | null;
+  preview: Preview | null;
+  clipped: Record<string, string[]>;
+  heights: Record<string, number>;
 };
 
 // 서버 렌더와 첫 클라이언트 렌더가 같아야 하므로 초기 Frame ID는 고정값이다.
@@ -27,6 +31,8 @@ const initial: Doc = {
       previewWidth: 390,
       previewHeight: 844,
     },
+    bpinit0768: { type: "breakpoint", parent: "frame0000", name: "Tablet", minWidth: 768 },
+    bpinit1280: { type: "breakpoint", parent: "frame0000", name: "Desktop", minWidth: 1280 },
   },
 };
 
@@ -38,6 +44,8 @@ export const useEditor = create<State>(() => ({
   view: { x: 40, y: 40, zoom: 1 },
   error: null,
   preview: null,
+  clipped: {},
+  heights: {},
 }));
 
 source.subscribe(() => {

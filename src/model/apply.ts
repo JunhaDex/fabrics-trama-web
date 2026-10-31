@@ -1,8 +1,8 @@
 import { generateKeyBetween } from "fractional-indexing";
 import { z } from "zod";
-import { KEYS, PARENTS, Tx, type NodeType, type Op, type Placement } from "./schema";
+import { bpAllowed, KEYS, PARENTS, Tx, type ObjType, type Op, type Placement } from "./schema";
 
-export type Obj = { type: NodeType; parent: string | null; order: string } & Record<string, unknown>;
+export type Obj = { type: ObjType; parent: string | null; order?: string } & Record<string, unknown>;
 export type Objects = Record<string, Obj>;
 export type Doc = { schemaVersion: 1; objects: Objects };
 
@@ -13,7 +13,10 @@ export type ErrorCode =
   | "TYPE_IMMUTABLE"
   | "INVALID_PARENT"
   | "TREE_CYCLE"
+  | "KEY_INVALID"
   | "KEY_NOT_ALLOWED"
+  | "CONDITION_NOT_ALLOWED"
+  | "CONDITION_TARGET_MISSING"
   | "VALUE_INVALID";
 
 export type OpError = {
@@ -101,11 +104,25 @@ function diff(prev: Objects, next: Objects): Change[] {
   return out;
 }
 
-/** parent의 자식을 (order, id) 사전순으로 돌려준다. parent가 null이면 보드 위 Frame이다. */
+/** parent의 자식 노드를 (order, id) 사전순으로 돌려준다. parent가 null이면 보드 위 Frame이다. breakpoint는 포함하지 않는다. */
 export function childrenOf(objects: Objects, parent: string | null): [string, Obj][] {
   return Object.entries(objects)
-    .filter(([, o]) => o.parent === parent)
-    .sort(([a, x], [b, y]) => (x.order !== y.order ? (x.order < y.order ? -1 : 1) : a < b ? -1 : 1));
+    .filter(([, o]) => o.parent === parent && o.type !== "breakpoint")
+    .sort(([a, x], [b, y]) => (x.order !== y.order ? (x.order! < y.order! ? -1 : 1) : a < b ? -1 : 1));
+}
+
+/** Frame의 breakpoint를 minWidth 오름차순으로 돌려준다. */
+export function breakpointsOf(objects: Objects, frame: string): [string, Obj][] {
+  return Object.entries(objects)
+    .filter(([, o]) => o.parent === frame && o.type === "breakpoint")
+    .sort(([, x], [, y]) => (x.minWidth as number) - (y.minWidth as number));
+}
+
+/** 객체가 속한 Frame의 ID. */
+export function frameOf(objects: Objects, id: string): string {
+  let cur = id;
+  while (objects[cur].parent !== null) cur = objects[cur].parent!;
+  return cur;
 }
 
 function apply(o: Objects, op: Op) {
@@ -113,48 +130,78 @@ function apply(o: Objects, op: Op) {
     case "create": {
       if (Object.hasOwn(o, op.id) || op.id === "mode" || op.id.startsWith("_"))
         throw new Reject("ID_CONFLICT", op.id, null, "이미 있거나 예약된 ID다");
-      const props = op.props ?? {};
-      checkProps(op.type, op.id, props);
+      const node = op.type !== "breakpoint";
+      if (node !== (op.placement !== undefined))
+        throw new Reject("VALUE_INVALID", op.id, "placement", "노드는 placement가 필요하고, 노드가 아닌 객체는 placement를 받지 않는다");
       checkParent(o, op.type, op.id, op.parent);
-      const obj: Obj = { type: op.type, parent: op.parent, order: orderAt(o, op.parent, op.placement, op.id) };
+      const props = op.props ?? {};
+      checkProps(o, op.type, op.id, op.parent === null ? op.id : frameOf(o, op.parent), props);
+      const obj: Obj = { type: op.type, parent: op.parent };
+      if (node) obj.order = orderAt(o, op.parent, op.placement!, op.id);
       for (const [k, v] of Object.entries(props)) if (v !== null) obj[k] = v;
       o[op.id] = obj;
+      if (!node) checkBreakpoints(o, op.parent!, op.id);
       return;
     }
     case "set": {
       const obj = get(o, op.id);
-      checkProps(obj.type, op.id, op.props);
+      checkProps(o, obj.type, op.id, frameOf(o, op.id), op.props);
       const next = { ...obj };
       for (const [k, v] of Object.entries(op.props)) {
         if (v === null) delete next[k];
         else next[k] = v;
       }
       o[op.id] = next;
+      if (obj.type === "breakpoint") checkBreakpoints(o, obj.parent!, op.id);
+      else if (obj.type === "frame" && "minWidth" in op.props) checkBreakpoints(o, op.id, op.id);
       return;
     }
     case "move": {
       const obj = get(o, op.id);
+      if (obj.type === "breakpoint") throw new Reject("INVALID_PARENT", op.id, null, "breakpoint는 옮길 수 없다");
+      if (op.placement === undefined) throw new Reject("VALUE_INVALID", op.id, "placement", "move에는 placement가 필요하다");
       checkParent(o, obj.type, op.id, op.parent);
+      const from = frameOf(o, op.id);
       o[op.id] = { ...obj, parent: op.parent, order: orderAt(o, op.parent, op.placement, op.id) };
+      if (frameOf(o, op.id) !== from) for (const id of subtree(o, op.id)) strip(o, id, () => true);
       return;
     }
     case "delete": {
-      get(o, op.id);
-      const kids = new Map<string | null, string[]>();
-      for (const [id, x] of Object.entries(o)) {
-        const list = kids.get(x.parent);
-        if (list) list.push(id);
-        else kids.set(x.parent, [id]);
-      }
-      const stack = [op.id];
-      while (stack.length) {
-        const id = stack.pop()!;
-        delete o[id];
-        stack.push(...(kids.get(id) ?? []));
-      }
+      const obj = get(o, op.id);
+      for (const id of subtree(o, op.id)) delete o[id];
+      if (obj.type === "breakpoint") for (const id of Object.keys(o)) strip(o, id, (bp) => bp === op.id);
       return;
     }
   }
+}
+
+function subtree(o: Objects, root: string): string[] {
+  const kids = new Map<string | null, string[]>();
+  for (const [id, x] of Object.entries(o)) {
+    const list = kids.get(x.parent);
+    if (list) list.push(id);
+    else kids.set(x.parent, [id]);
+  }
+  const out: string[] = [];
+  const stack = [root];
+  while (stack.length) {
+    const id = stack.pop()!;
+    out.push(id);
+    stack.push(...(kids.get(id) ?? []));
+  }
+  return out;
+}
+
+/** match가 참인 BP를 가리키는 `@bp:` 키를 지운다. */
+function strip(o: Objects, id: string, match: (bp: string) => boolean) {
+  const keys = Object.keys(o[id]).filter((k) => {
+    const m = /@bp:(.+)$/.exec(k);
+    return m && match(m[1]);
+  });
+  if (!keys.length) return;
+  const next = { ...o[id] };
+  for (const k of keys) delete next[k];
+  o[id] = next;
 }
 
 function get(o: Objects, id: string): Obj {
@@ -162,17 +209,42 @@ function get(o: Objects, id: string): Obj {
   return o[id];
 }
 
-function checkProps(type: NodeType, id: string, props: Record<string, unknown>) {
+function checkProps(o: Objects, type: ObjType, id: string, frame: string, props: Record<string, unknown>) {
   for (const [k, v] of Object.entries(props)) {
     if (k === "type") throw new Reject("TYPE_IMMUTABLE", id, k, "type은 바꿀 수 없다");
-    if (!Object.hasOwn(KEYS[type], k))
+    const at = k.indexOf("@");
+    const base = at < 0 ? k : k.slice(0, at);
+    if (!Object.hasOwn(KEYS[type], base))
       throw new Reject("KEY_NOT_ALLOWED", id, k, `${type}에 없는 키다. parent·order는 move로 바꾼다`);
-    if (v !== null && !KEYS[type][k].safeParse(v).success)
-      throw new Reject("VALUE_INVALID", id, k, "값 형식이 맞지 않는다");
+    if (at >= 0) {
+      const cond = k.slice(at);
+      if (/^@(var|state):/.test(cond)) throw new Reject("CONDITION_NOT_ALLOWED", id, k, "@var·@state는 컴포넌트 원본에서만 쓴다");
+      const m = /^@bp:([A-Za-z0-9_-]{6,32})$/.exec(cond);
+      if (!m) throw new Reject("KEY_INVALID", id, k, "조건 키 문법이 맞지 않는다");
+      if (type === "breakpoint" || !bpAllowed(base))
+        throw new Reject("CONDITION_NOT_ALLOWED", id, k, "이 키는 BP마다 다르게 둘 수 없다");
+      const bp = o[m[1]];
+      if (!bp || bp.type !== "breakpoint" || bp.parent !== frame)
+        throw new Reject("CONDITION_TARGET_MISSING", id, k, "같은 Frame의 breakpoint가 아니다");
+    }
+    if (v !== null && !KEYS[type][base].safeParse(v).success) throw new Reject("VALUE_INVALID", id, k, "값 형식이 맞지 않는다");
   }
 }
 
-function checkParent(o: Objects, type: NodeType, id: string, parent: string | null) {
+/** Frame의 BP minWidth가 서로 다르고 Frame minWidth보다 큰지 검사한다. */
+function checkBreakpoints(o: Objects, frame: string, id: string) {
+  const min = (o[frame].minWidth as number) ?? 320;
+  const seen = new Set<number>();
+  for (const [bid, bp] of breakpointsOf(o, frame)) {
+    const w = bp.minWidth as number | undefined;
+    if (w === undefined) throw new Reject("VALUE_INVALID", bid, "minWidth", "breakpoint에는 minWidth가 필요하다");
+    if (w <= min || seen.has(w))
+      throw new Reject("VALUE_INVALID", id, "minWidth", "BP minWidth는 Frame 안에서 서로 다르고 Frame minWidth보다 커야 한다");
+    seen.add(w);
+  }
+}
+
+function checkParent(o: Objects, type: ObjType, id: string, parent: string | null) {
   const pType = parent === null ? null : get(o, parent).type;
   if (!PARENTS[type].includes(pType))
     throw new Reject("INVALID_PARENT", id, null, `${type}의 부모로 ${pType ?? "보드"}를 쓸 수 없다`);
