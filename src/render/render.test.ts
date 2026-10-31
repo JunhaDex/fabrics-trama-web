@@ -78,3 +78,39 @@ describe("결정성", () => {
     expect(css(build(explicit, "frame1"))).toBe(css(build(implicit, "frame1")));
   });
 });
+
+describe("반응형 golden", () => {
+  const rem = (value: number) => ({ value, unit: "rem" });
+  const resp = doc(
+    { op: "create", id: "frame1", type: "frame", parent: null, placement: "last", props: { name: "Responsive" } },
+    { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", props: { name: "Tablet", minWidth: 768 } },
+    { op: "create", id: "bp1280", type: "breakpoint", parent: "frame1", props: { name: "Desktop", minWidth: 1280 } },
+    { op: "create", id: "row001", type: "section", parent: "frame1", placement: "last",
+      props: { "layout.mode@bp:bp0768": "flex-row", "layout.gap": px(8), "layout.gap@bp:bp1280": px(24) } },
+    { op: "create", id: "side01", type: "container", parent: "row001", placement: "last", props: { "size.width@bp:bp0768": px(240) } },
+    { op: "create", id: "main01", type: "container", parent: "row001", placement: "last", props: { "size.width@bp:bp0768": "fill" } },
+    { op: "create", id: "head01", type: "text", parent: "main01", placement: "last",
+      props: { content: "제목", "style.font-size": rem(1.25), "style.font-size@bp:bp1280": rem(2) } },
+    { op: "create", id: "note01", type: "text", parent: "main01", placement: "last",
+      props: { content: "데스크톱 전용", hidden: true, "hidden@bp:bp1280": false } },
+    { op: "create", id: "tabl01", type: "text", parent: "main01", placement: "last",
+      props: { content: "태블릿 전용", "hidden@bp:bp0768": true } },
+    { op: "create", id: "hero01", type: "image", parent: "main01", placement: "last",
+      props: { src: "s.jpg", alt: "히어로", "src@bp:bp0768": "m.jpg", "src@bp:bp1280": "l.jpg" } },
+  );
+  const page = build(resp, "frame1");
+
+  it("export", async () => {
+    const out = toExport(page);
+    await expect(out.html).toMatchFileSnapshot("__golden__/responsive.export.html");
+    await expect(out.css).toMatchFileSnapshot("__golden__/responsive.export.css");
+  });
+
+  it("srcdoc", async () => {
+    await expect(toSrcdoc(page)).toMatchFileSnapshot("__golden__/responsive.srcdoc.html");
+  });
+
+  it("BP가 없으면 @media를 내지 않는다", () => {
+    expect(css(build(pricing, "frame1"))).not.toContain("@media");
+  });
+});

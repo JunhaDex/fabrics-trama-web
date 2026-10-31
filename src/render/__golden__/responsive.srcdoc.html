@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Responsive</title>
+<style>
+*, ::before, ::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+picture {
+  display: contents;
+}
+
+.n-frame1 {
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+}
+
+.n-row001 {
+  column-gap: 8px;
+  display: flex;
+  flex-direction: column;
+  row-gap: 8px;
+}
+
+.n-side01 {
+  display: flex;
+  flex-direction: column;
+}
+
+.n-main01 {
+  display: flex;
+  flex-direction: column;
+}
+
+.n-head01 {
+  font-size: 1.25rem;
+}
+
+.n-note01 {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .n-row001 {
+    flex-direction: row;
+  }
+
+  .n-side01 {
+    flex-shrink: 0;
+    width: 240px;
+  }
+
+  .n-main01 {
+    flex-basis: 0%;
+    flex-grow: 1;
+    min-width: 0;
+  }
+
+  .n-tabl01 {
+    display: none;
+  }
+}
+
+@media (min-width: 1280px) {
+  .n-row001 {
+    column-gap: 24px;
+    row-gap: 24px;
+  }
+
+  .n-head01 {
+    font-size: 2rem;
+  }
+
+  .n-note01 {
+    display: revert;
+  }
+}
+</style>
+</head>
+<body class="n-frame1" data-id="frame1">
+  <section class="n-row001" data-id="row001">
+    <div class="n-side01" data-id="side01"></div>
+    <div class="n-main01" data-id="main01">
+      <p class="n-head01" data-id="head01">제목</p>
+      <p class="n-note01" data-id="note01">데스크톱 전용</p>
+      <p class="n-tabl01" data-id="tabl01">태블릿 전용</p>
+      <picture>
+        <source media="(min-width: 1280px)" srcset="l.jpg">
+        <source media="(min-width: 768px)" srcset="m.jpg">
+        <img class="n-hero01" src="s.jpg" alt="히어로" data-id="hero01">
+      </picture>
+    </div>
+  </section>
+</body>
+</html>

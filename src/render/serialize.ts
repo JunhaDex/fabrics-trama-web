@@ -1,4 +1,4 @@
-import type { El, Page } from "./build";
+import type { El, Page, Rule } from "./build";
 
 type Opts = { dataId: boolean; dataLayout: boolean };
 
@@ -8,17 +8,22 @@ const escAttr = (s: string) => esc(s).replace(/"/g, "&quot;");
 function el(e: El, opts: Opts, depth: number): string {
   const pad = "  ".repeat(depth);
   const attrs = [...e.attrs];
-  if (opts.dataId) attrs.push(["data-id", e.id]);
+  if (opts.dataId && e.id) attrs.push(["data-id", e.id]);
   if (opts.dataLayout && e.layout) attrs.push(["data-layout", e.layout]);
   const open = `<${e.tag}${attrs.map(([k, v]) => ` ${k}="${escAttr(v)}"`).join("")}>`;
-  if (e.tag === "img") return pad + open;
+  if (e.tag === "img" || e.tag === "source") return pad + open;
   if (e.text !== null) return `${pad}${open}${esc(e.text)}</${e.tag}>`;
   if (!e.children.length) return `${pad}${open}</${e.tag}>`;
   return [pad + open, ...e.children.map((c) => el(c, opts, depth + 1)), `${pad}</${e.tag}>`].join("\n");
 }
 
+const rule = (r: Rule, pad: string) => `${pad}${r.sel} {\n${r.decls.map(([p, v]) => `${pad}  ${p}: ${v};\n`).join("")}${pad}}\n`;
+
 export function css(page: Page): string {
-  return page.rules.map((r) => `${r.sel} {\n${r.decls.map(([p, v]) => `  ${p}: ${v};\n`).join("")}}\n`).join("\n");
+  return [
+    ...page.rules.map((r) => rule(r, "")),
+    ...page.media.map((m) => `@media (min-width: ${m.min}px) {\n${m.rules.map((r) => rule(r, "  ")).join("\n")}}\n`),
+  ].join("\n");
 }
 
 function html(page: Page, head: string, opts: Opts): string {
