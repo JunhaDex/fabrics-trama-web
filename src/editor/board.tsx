@@ -1,12 +1,12 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
-import { breakpointsOf, childrenOf, modifiersOf, type Doc, type Obj } from "@/model";
+import { breakpointsOf, childrenOf, componentPropsOf, modifiersOf, optionsOf, STATES, type Doc, type Obj } from "@/model";
 import { build, toSrcdoc } from "@/render";
 import { dropTarget, type Drop } from "./drop";
-import { frameBox, hit, iframes, rectOf, scan, snapshot, toBoard, type Rect, type Scan } from "./geometry";
-import { activeBp, effective, writeAll } from "./bp";
-import { apply, select, useEditor } from "./store";
+import { frameBox, hit, iframes, minWidthOf, rectOf, scan, snapshot, toBoard, type Rect, type Scan } from "./geometry";
+import { activeBp, activeCq, cqsOf, effective, writeAll } from "./bp";
+import { apply, compView, select, setCompView, useEditor } from "./store";
 import { isTyping } from "./keys";
 
 type Drag =
@@ -54,7 +54,7 @@ export function Board() {
     const y0 = -view.y / view.zoom - m;
     const x1 = (size.w - view.x) / view.zoom + m;
     const y1 = (size.h - view.y) / view.zoom + m;
-    const w = Math.max(b.w, (f.minWidth as number) ?? 320);
+    const w = Math.max(b.w, minWidthOf(f));
     const h = Math.max(b.h, heights[id] ?? 0);
     return b.x < x1 && b.x + w > x0 && b.y < y1 && b.y + h > y0;
   };
@@ -183,11 +183,16 @@ function applyCtx(el: HTMLIFrameElement, attrs: Record<string, string>) {
 type FrameProps = { id: string; frame: Obj; doc: Doc; onLoad: () => void; hair: number; live: boolean; attrs: Record<string, string> };
 
 const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair, live, attrs }: FrameProps) {
-  const html = useMemo(() => toSrcdoc(build(doc, id)), [doc, id]);
+  const isComp = frame.type === "component";
+  const cv = useEditor((s) => s.comp[id]);
+  const html = useMemo(
+    () => toSrcdoc(build(doc, id, isComp ? { preview: { props: cv?.var ? { [cv.var[0]]: cv.var[1] } : {}, state: cv?.state ?? null } } : {})),
+    [doc, id, isComp, cv],
+  );
   const [res, setRes] = useState<Scan | null>(null);
   const observer = useRef<ResizeObserver | null>(null);
   const b = frameBox(frame);
-  const minWidth = (frame.minWidth as number) ?? 320;
+  const minWidth = minWidthOf(frame);
   // 미리보기가 minWidth보다 좁아도 그 구간에는 BP가 없으므로, minWidth 폭으로 그려도 출력이 같다.
   const w = Math.max(b.w, minWidth);
   const h = Math.max(b.h, res?.contentH ?? 0);
@@ -214,7 +219,7 @@ const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair, live, 
 
   return (
     <div className="absolute" style={{ left: b.x, top: b.y }}>
-      <FrameBar id={id} frame={frame} doc={doc} />
+      {isComp ? <ComponentBar id={id} frame={frame} doc={doc} /> : <FrameBar id={id} frame={frame} doc={doc} />}
       {still ? (
         // eslint-disable-next-line @next/next/no-img-element -- data URL 스냅샷이라 next/image 최적화가 필요 없다.
         <img src={still} alt="" className="pointer-events-none block max-w-none" style={{ width: w, height: h, background: "#fff" }} />
@@ -233,7 +238,7 @@ const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair, live, 
           style={{ width: w, height: h, background: "#fff" }}
         />
       )}
-      {h > b.h && (
+      {!isComp && h > b.h && (
         <div
           className="pointer-events-none absolute left-0"
           style={{ top: b.h, width: w, height: h - b.h, background: "rgb(0 0 0 / 0.06)", borderTop: `${hair}px dashed rgb(0 0 0 / 0.45)` }}
@@ -256,13 +261,13 @@ const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair, live, 
   );
 });
 
-const drawnWidth = (f: Obj) => Math.max(frameBox(f).w, (f.minWidth as number) ?? 320);
+const drawnWidth = (f: Obj) => Math.max(frameBox(f).w, minWidthOf(f));
 
-/** Frame 미리보기 폭을 바꾸고, 오른쪽에 있으면서 세로로 겹치는 Frame을 폭 변화만큼 함께 옮긴다. */
+/** Frame·컴포넌트 미리보기 폭을 바꾸고, 오른쪽에 있으면서 세로로 겹치는 것을 폭 변화만큼 함께 옮긴다. */
 function resizeFrame(doc: Doc, id: string, width: number) {
   const f = doc.objects[id];
   const b = frameBox(f);
-  const delta = Math.max(width, (f.minWidth as number) ?? 320) - drawnWidth(f);
+  const delta = Math.max(width, minWidthOf(f)) - drawnWidth(f);
   const { heights } = useEditor.getState();
   const bottom = (fid: string, o: Obj) => frameBox(o).y + Math.max(frameBox(o).h, heights[fid] ?? 0);
   const shifted = delta
@@ -300,6 +305,66 @@ function FrameBar({ id, frame, doc }: { id: string; frame: Obj; doc: Doc }) {
           {name} {bid && <span className="opacity-70">{width}</span>}
         </button>
       ))}
+    </div>
+  );
+}
+
+const barSelect = "h-6 rounded border border-border bg-surface px-1 text-xs text-on-surface";
+
+/** 컴포넌트 보드 막대. 컨테이너 쿼리 구간 탭, 변형·상태 미리보기 선택. 고른 변형·상태가 편집 대상 조건이 된다. */
+function ComponentBar({ id, frame, doc }: { id: string; frame: Obj; doc: Doc }) {
+  const cv = useEditor((s) => s.comp[id]) ?? compView(id);
+  const cqs = cqsOf(doc, id);
+  const active = activeCq(doc, id);
+  const w = frameBox(frame).w;
+  const tabs: [number | null, number][] = [[null, Math.min(320, (cqs[0] ?? 321) - 1)], ...cqs.map((n): [number, number] => [n, n])];
+  return (
+    <div className="absolute bottom-full mb-1 flex items-center gap-2 whitespace-nowrap text-xs" onPointerDown={(e) => e.stopPropagation()}>
+      <span className="font-semibold text-brand">{(frame.name as string) || "Component"}</span>
+      {tabs.map(([n, width]) => (
+        <button
+          key={n ?? "base"}
+          type="button"
+          onClick={() => resizeFrame(doc, id, width)}
+          className={`rounded px-1.5 py-0.5 ${n === active ? "bg-brand text-on-brand" : "text-on-surface-muted hover:bg-surface-raised"}`}
+        >
+          {n === null ? "base" : `≥${n}`}
+        </button>
+      ))}
+      {!cqs.includes(Math.round(w)) && (
+        <button
+          type="button"
+          title="현재 폭을 컨테이너 쿼리 기준으로 추가"
+          onClick={() => setCompView(id, { cqs: [...cv.cqs, Math.round(w)] })}
+          className="rounded px-1.5 py-0.5 text-on-surface-muted hover:bg-surface-raised"
+        >
+          + @cq {Math.round(w)}
+        </button>
+      )}
+      {componentPropsOf(doc.objects, id).map(([cp, p]) => (
+        <label key={cp} className="flex items-center gap-1 text-on-surface-muted">
+          {p.name as string}
+          <select
+            className={barSelect}
+            value={cv.var?.[0] === cp ? cv.var[1] : ""}
+            onChange={(e) => setCompView(id, { var: e.target.value ? [cp, e.target.value] : null })}
+          >
+            <option value="">—</option>
+            {optionsOf(p).map((o) => (
+              <option key={o}>{o}</option>
+            ))}
+          </select>
+        </label>
+      ))}
+      <label className="flex items-center gap-1 text-on-surface-muted">
+        상태
+        <select className={barSelect} value={cv.state ?? ""} onChange={(e) => setCompView(id, { state: e.target.value || null })}>
+          <option value="">—</option>
+          {STATES.map((s) => (
+            <option key={s}>{s}</option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 }

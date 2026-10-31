@@ -13,7 +13,7 @@ describe("JSON Schema", () => {
     const props = (t: (typeof OBJ_TYPES)[number]) =>
       z.strictObject(Object.fromEntries(Object.entries(KEYS[t]).map(([k, s]) => [k, s.nullable()]))).partial();
     const instance = strip(z.toJSONSchema(props("instance")));
-    // props.*·node.* 키는 zod 객체로 표현되지 않으므로 패턴 속성으로 덧붙인다. 상세 검증은 문서 모델 8절을 따른다.
+    // props.*·node.* 키는 zod 객체로 표현되지 않으므로 패턴 속성으로 덧붙인다.
     instance.patternProperties = {
       "^props\\.[A-Za-z0-9_-]{6,32}$": { type: ["string", "null"], description: "componentProp ID → 옵션 값" },
       "^node\\.[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*\\.": { description: "인스턴스 override. 값은 기본키의 형식" },

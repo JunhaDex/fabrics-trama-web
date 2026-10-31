@@ -9,11 +9,15 @@ import { apply, newId, select, useEditor } from "./store";
 
 const LABEL: Record<NodeType, string> = {
   frame: "Frame",
+  component: "Component",
+  instance: "Instance",
   section: "Section",
   container: "Container",
   text: "Text",
   image: "Image",
 };
+
+const MARK: Partial<Record<NodeType, string>> = { component: "◆", instance: "◇" };
 
 const DEFAULTS: Partial<Record<NodeType, Record<string, unknown>>> = {
   section: { "size.minHeight": { value: 80, unit: "px" } },
@@ -31,9 +35,28 @@ function target(doc: Doc, sel: string | null, type: NodeType): { parent: string;
   return p && PARENTS[type].includes(doc.objects[p].type) ? { parent: p, placement: { after: sel } } : null;
 }
 
+/** 보드에서 가장 오른쪽 Frame·컴포넌트의 오른쪽 80px 지점. */
+export function nextBoardX(doc: Doc) {
+  return Math.max(-80, ...childrenOf(doc.objects, null).map(([, f]) => frameBox(f).x + frameBox(f).w)) + 80;
+}
+
+function addComponent(doc: Doc) {
+  const id = newId();
+  const n = childrenOf(doc.objects, null).filter(([, o]) => o.type === "component").length;
+  const r = apply({
+    op: "create",
+    id,
+    type: "component",
+    parent: null,
+    placement: "last",
+    props: { name: `Component ${n + 1}`, boardX: nextBoardX(doc), boardY: 0, previewWidth: 320, previewHeight: 120, "style.padding-top": { value: 8, unit: "px" } },
+  });
+  if (r.ok) select(id);
+}
+
 function addFrame(doc: Doc) {
-  const frames = childrenOf(doc.objects, null);
-  const x = Math.max(-80, ...frames.map(([, f]) => frameBox(f).x + frameBox(f).w)) + 80;
+  const frames = childrenOf(doc.objects, null).filter(([, o]) => o.type === "frame");
+  const x = nextBoardX(doc);
   const id = newId();
   const r = apply(
     {
@@ -50,11 +73,11 @@ function addFrame(doc: Doc) {
   if (r.ok) select(id);
 }
 
-function add(doc: Doc, sel: string | null, type: NodeType) {
+function add(doc: Doc, sel: string | null, type: NodeType, props = DEFAULTS[type]) {
   const t = target(doc, sel, type);
   if (!t) return;
   const id = newId();
-  const r = apply({ op: "create", id, type, ...t, props: DEFAULTS[type] });
+  const r = apply({ op: "create", id, type, ...t, props });
   if (r.ok) select(id);
 }
 
@@ -69,17 +92,37 @@ function shift(doc: Doc, id: string, dir: -1 | 1) {
 export function Layers() {
   const doc = useEditor((s) => s.doc);
   const sel = useEditor((s) => s.selected);
+  const comps = childrenOf(doc.objects, null).filter(([, o]) => o.type === "component");
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap gap-1 border-b border-border p-2">
         <Button size="sm" variant="secondary" onClick={() => addFrame(doc)}>
           + Frame
         </Button>
+        <Button size="sm" variant="secondary" onClick={() => addComponent(doc)}>
+          + Component
+        </Button>
         {(["section", "container", "text", "image"] as const).map((t) => (
           <Button key={t} size="sm" variant="ghost" disabled={!target(doc, sel, t)} onClick={() => add(doc, sel, t)}>
             + {LABEL[t]}
           </Button>
         ))}
+        {comps.length > 0 && (
+          <select
+            aria-label="인스턴스 추가"
+            value=""
+            disabled={!target(doc, sel, "instance")}
+            onChange={(e) => e.target.value && add(doc, sel, "instance", { component: e.target.value })}
+            className="h-8 rounded border border-border bg-surface px-1 text-xs disabled:opacity-50"
+          >
+            <option value="">+ Instance</option>
+            {comps.map(([cid, c]) => (
+              <option key={cid} value={cid} disabled={sel !== null && frameOf(doc.objects, sel) === cid}>
+                {(c.name as string) || cid}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
       <ul role="tree" aria-label="레이어" className="flex-1 overflow-auto py-1 text-sm">
         {childrenOf(doc.objects, null).map(([id]) => (
@@ -107,7 +150,11 @@ function Layer({ doc, id, sel, depth }: { doc: Doc; id: string; sel: string | nu
   const o = doc.objects[id];
   const type = o.type as NodeType;
   const kids = childrenOf(doc.objects, id);
-  const label = (o.name as string) || (type === "text" ? (o.content as string) : "") || LABEL[type];
+  const label =
+    (o.name as string) ||
+    (type === "text" ? (o.content as string) : "") ||
+    (type === "instance" ? (doc.objects[o.component as string]?.name as string) : "") ||
+    LABEL[type];
   const bp = activeBp(doc, frameOf(doc.objects, id));
   const hidden = effective(doc, id).hidden === true;
   const clipped = useEditor((s) => s.clipped[frameOf(doc.objects, id)]?.includes(id));
@@ -119,7 +166,7 @@ function Layer({ doc, id, sel, depth }: { doc: Doc; id: string; sel: string | nu
         className={`flex w-full items-center gap-2 truncate py-1 pr-2 text-left hover:bg-surface-raised ${id === sel ? "bg-brand-subtle text-on-brand-subtle" : ""} ${hidden ? "text-on-surface-muted" : ""}`}
         style={{ paddingLeft: 8 + depth * 12 }}
       >
-        <span className="text-xs text-on-surface-muted">{LABEL[type][0]}</span>
+        <span className={`text-xs ${MARK[type] ? "text-brand" : "text-on-surface-muted"}`}>{MARK[type] ?? LABEL[type][0]}</span>
         <span className="truncate">{label}</span>
         {clipped && (
           <span className="rounded bg-warning-subtle px-1 text-xs text-on-warning-subtle" title="clip이 자식을 자르고 있음">
