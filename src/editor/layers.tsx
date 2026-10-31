@@ -1,8 +1,9 @@
 "use client";
 
 import { Button, Icon } from "@junhadex/core";
-import { ArrowDown, ArrowUp, Trash2 } from "lucide";
-import { childrenOf, PARENTS, type Doc, type NodeType, type Placement } from "@/model";
+import { ArrowDown, ArrowUp, EyeOff, Trash2 } from "lucide";
+import { childrenOf, frameOf, PARENTS, type Doc, type NodeType, type Placement } from "@/model";
+import { activeBp, effective } from "./bp";
 import { frameBox } from "./geometry";
 import { apply, newId, select, useEditor } from "./store";
 
@@ -34,14 +35,18 @@ function addFrame(doc: Doc) {
   const frames = childrenOf(doc.objects, null);
   const x = Math.max(-80, ...frames.map(([, f]) => frameBox(f).x + frameBox(f).w)) + 80;
   const id = newId();
-  const r = apply({
-    op: "create",
-    id,
-    type: "frame",
-    parent: null,
-    placement: "last",
-    props: { name: `Frame ${frames.length + 1}`, boardX: x, boardY: 0, previewWidth: 390, previewHeight: 844 },
-  });
+  const r = apply(
+    {
+      op: "create",
+      id,
+      type: "frame",
+      parent: null,
+      placement: "last",
+      props: { name: `Frame ${frames.length + 1}`, boardX: x, boardY: 0, previewWidth: 390, previewHeight: 844 },
+    },
+    { op: "create", id: newId(), type: "breakpoint", parent: id, props: { name: "Tablet", minWidth: 768 } },
+    { op: "create", id: newId(), type: "breakpoint", parent: id, props: { name: "Desktop", minWidth: 1280 } },
+  );
   if (r.ok) select(id);
 }
 
@@ -103,16 +108,24 @@ function Layer({ doc, id, sel, depth }: { doc: Doc; id: string; sel: string | nu
   const type = o.type as NodeType;
   const kids = childrenOf(doc.objects, id);
   const label = (o.name as string) || (type === "text" ? (o.content as string) : "") || LABEL[type];
+  const bp = activeBp(doc, frameOf(doc.objects, id));
+  const hidden = effective(doc, id).hidden === true;
   return (
     <li role="treeitem" aria-selected={id === sel} aria-expanded={kids.length ? true : undefined}>
       <button
         type="button"
         onClick={() => select(id)}
-        className={`flex w-full items-center gap-2 truncate py-1 pr-2 text-left hover:bg-surface-raised ${id === sel ? "bg-brand-subtle text-on-brand-subtle" : ""} ${o.hidden ? "text-on-surface-muted" : ""}`}
+        className={`flex w-full items-center gap-2 truncate py-1 pr-2 text-left hover:bg-surface-raised ${id === sel ? "bg-brand-subtle text-on-brand-subtle" : ""} ${hidden ? "text-on-surface-muted" : ""}`}
         style={{ paddingLeft: 8 + depth * 12 }}
       >
         <span className="text-xs text-on-surface-muted">{LABEL[type][0]}</span>
         <span className="truncate">{label}</span>
+        {hidden && (
+          <span className="ml-auto flex items-center gap-1 text-xs text-on-surface-muted" title="현재 BP에서 숨김">
+            <Icon node={EyeOff} />
+            {bp ? (doc.objects[bp].name as string) || `${doc.objects[bp].minWidth}` : "base"}
+          </span>
+        )}
       </button>
       {kids.length > 0 && (
         <ul role="group">

@@ -1,10 +1,11 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
-import { childrenOf, type Doc, type Obj } from "@/model";
+import { breakpointsOf, childrenOf, type Doc, type Obj } from "@/model";
 import { build, toSrcdoc } from "@/render";
 import { dropTarget, type Drop } from "./drop";
 import { frameBox, hit, iframes, rectOf, toBoard, type Rect } from "./geometry";
+import { activeBp, effective, writeAll } from "./bp";
 import { apply, select, useEditor } from "./store";
 import { isTyping } from "./keys";
 
@@ -90,7 +91,7 @@ export function Board() {
     d.dy = p.y - d.sy;
     if (!d.moved && Math.hypot(d.dx, d.dy) * view.zoom < 4) return;
     d.moved = true;
-    if (doc.objects[d.id].position === "absolute") {
+    if (effective(doc, d.id).position === "absolute") {
       setGhost(d.origin && { rect: { ...d.origin, x: d.origin.x + d.dx, y: d.origin.y + d.dy } });
       return;
     }
@@ -105,10 +106,10 @@ export function Board() {
     drag.current = null;
     setGhost(null);
     if (d?.kind !== "node" || !d.moved) return;
-    const o = doc.objects[d.id];
-    if (o.position === "absolute")
-      apply({ op: "set", id: d.id, props: { x: Math.round(((o.x as number) ?? 0) + d.dx), y: Math.round(((o.y as number) ?? 0) + d.dy) } });
-    else if (d.drop) apply({ op: "move", id: d.id, parent: d.drop.parent, placement: d.drop.placement });
+    const o = effective(doc, d.id);
+    if (o.position === "absolute") {
+      writeAll(d.id, { x: Math.round(((o.x as number) ?? 0) + d.dx), y: Math.round(((o.y as number) ?? 0) + d.dy) });
+    } else if (d.drop) apply({ op: "move", id: d.id, parent: d.drop.parent, placement: d.drop.placement });
   };
 
   const px = 2 / view.zoom;
@@ -145,7 +146,7 @@ const FrameView = memo(function FrameView({ id, frame, doc, onLoad }: { id: stri
   const b = frameBox(frame);
   return (
     <div className="absolute" style={{ left: b.x, top: b.y }}>
-      <div className="absolute bottom-full mb-1 whitespace-nowrap text-xs text-on-surface-muted">{(frame.name as string) ?? ""}</div>
+      <FrameBar id={id} frame={frame} doc={doc} />
       <iframe
         ref={(el) => {
           if (!el) return;
@@ -162,6 +163,33 @@ const FrameView = memo(function FrameView({ id, frame, doc, onLoad }: { id: stri
     </div>
   );
 });
+
+function FrameBar({ id, frame, doc }: { id: string; frame: Obj; doc: Doc }) {
+  const active = activeBp(doc, id);
+  const minWidth = (frame.minWidth as number) ?? 320;
+  const tabs: [string | null, string, number][] = [
+    [null, (frame.baseLabel as string) ?? "Mobile", Math.max(390, minWidth)],
+    ...breakpointsOf(doc.objects, id).map(([bid, bp]): [string, string, number] => [bid, (bp.name as string) || "BP", bp.minWidth as number]),
+  ];
+  return (
+    <div
+      className="absolute bottom-full mb-1 flex items-center gap-2 whitespace-nowrap text-xs"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <span className="text-on-surface-muted">{(frame.name as string) ?? ""}</span>
+      {tabs.map(([bid, name, width]) => (
+        <button
+          key={bid ?? "base"}
+          type="button"
+          onClick={() => apply({ op: "set", id, props: { previewWidth: width } })}
+          className={`rounded px-1.5 py-0.5 ${bid === active ? "bg-brand text-on-brand" : "text-on-surface-muted hover:bg-surface-raised"}`}
+        >
+          {name} {bid && <span className="opacity-70">{width}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function Outline({ rect, width, dashed }: { rect: Rect; width: number; dashed?: boolean }) {
   return (

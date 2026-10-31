@@ -1,4 +1,4 @@
-import type { Doc, Obj } from "@/model";
+import { frameOf, type Doc, type Obj } from "@/model";
 import type { View } from "./store";
 
 export type Rect = { x: number; y: number; w: number; h: number };
@@ -15,21 +15,15 @@ export function frameBox(f: Obj): Rect {
   };
 }
 
-export function frameOf(doc: Doc, id: string): string {
-  let cur = id;
-  while (doc.objects[cur].parent !== null) cur = doc.objects[cur].parent!;
-  return cur;
-}
-
 export function elementOf(doc: Doc, id: string): Element | null {
-  return iframes.get(frameOf(doc, id))?.contentDocument?.querySelector(`[data-id="${id}"]`) ?? null;
+  return iframes.get(frameOf(doc.objects, id))?.contentDocument?.querySelector(`[data-id="${id}"]`) ?? null;
 }
 
 /** 노드의 렌더 결과를 보드 좌표로 돌려준다. */
 export function rectOf(doc: Doc, id: string): Rect | null {
   const el = elementOf(doc, id);
   if (!el) return null;
-  const f = frameBox(doc.objects[frameOf(doc, id)]);
+  const f = frameBox(doc.objects[frameOf(doc.objects, id)]);
   const r = el.getBoundingClientRect();
   return { x: f.x + r.left, y: f.y + r.top, w: r.width, h: r.height };
 }

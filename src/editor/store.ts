@@ -27,6 +27,8 @@ const initial: Doc = {
       previewWidth: 390,
       previewHeight: 844,
     },
+    bpinit0768: { type: "breakpoint", parent: "frame0000", name: "Tablet", minWidth: 768 },
+    bpinit1280: { type: "breakpoint", parent: "frame0000", name: "Desktop", minWidth: 1280 },
   },
 };
 
