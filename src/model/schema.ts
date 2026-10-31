@@ -107,7 +107,7 @@ export const PARENTS: Record<NodeType, (NodeType | null)[]> = {
   image: ["frame", "section", "container"],
 };
 
-export const Position = z.union([
+export const Placement = z.union([
   z.enum(["first", "last"]),
   z.strictObject({ before: Id }),
   z.strictObject({ after: Id }),
@@ -121,11 +121,11 @@ export const Op = z.discriminatedUnion("op", [
     id: Id,
     type: z.enum(NODE_TYPES),
     parent: Id.nullable(),
-    position: Position,
+    placement: Placement,
     props: Props.optional(),
   }),
   z.strictObject({ op: z.literal("set"), id: Id, props: Props }),
-  z.strictObject({ op: z.literal("move"), id: Id, parent: Id.nullable(), position: Position }),
+  z.strictObject({ op: z.literal("move"), id: Id, parent: Id.nullable(), placement: Placement }),
   z.strictObject({ op: z.literal("delete"), id: Id }),
 ]);
 
@@ -135,6 +135,6 @@ export const Tx = z.strictObject({
   ops: z.array(Op).min(1),
 });
 
-export type Position = z.infer<typeof Position>;
+export type Placement = z.infer<typeof Placement>;
 export type Op = z.infer<typeof Op>;
 export type Tx = z.infer<typeof Tx>;

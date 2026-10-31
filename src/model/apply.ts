@@ -1,6 +1,6 @@
 import { generateKeyBetween } from "fractional-indexing";
 import { z } from "zod";
-import { KEYS, PARENTS, Tx, type NodeType, type Op, type Position } from "./schema";
+import { KEYS, PARENTS, Tx, type NodeType, type Op, type Placement } from "./schema";
 
 export type Obj = { type: NodeType; parent: string | null; order: string } & Record<string, unknown>;
 export type Objects = Record<string, Obj>;
@@ -81,7 +81,7 @@ function apply(o: Objects, op: Op) {
       const props = op.props ?? {};
       checkProps(op.type, op.id, props);
       checkParent(o, op.type, op.id, op.parent);
-      const obj: Obj = { type: op.type, parent: op.parent, order: orderAt(o, op.parent, op.position, op.id) };
+      const obj: Obj = { type: op.type, parent: op.parent, order: orderAt(o, op.parent, op.placement, op.id) };
       for (const [k, v] of Object.entries(props)) if (v !== null) obj[k] = v;
       o[op.id] = obj;
       return;
@@ -100,7 +100,7 @@ function apply(o: Objects, op: Op) {
     case "move": {
       const obj = get(o, op.id);
       checkParent(o, obj.type, op.id, op.parent);
-      o[op.id] = { ...obj, parent: op.parent, order: orderAt(o, op.parent, op.position, op.id) };
+      o[op.id] = { ...obj, parent: op.parent, order: orderAt(o, op.parent, op.placement, op.id) };
       return;
     }
     case "delete": {
@@ -145,7 +145,7 @@ function checkParent(o: Objects, type: NodeType, id: string, parent: string | nu
     if (p === id) throw new Reject("TREE_CYCLE", id, null, "자기 하위로 이동할 수 없다");
 }
 
-function orderAt(o: Objects, parent: string | null, pos: Position, self: string): string {
+function orderAt(o: Objects, parent: string | null, pos: Placement, self: string): string {
   const sibs = childrenOf(o, parent).filter(([id]) => id !== self);
   const at = (i: number) => sibs[i]?.[1].order ?? null;
   if (pos === "first") return generateKeyBetween(null, at(0));

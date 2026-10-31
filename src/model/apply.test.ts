@@ -20,10 +20,10 @@ function code(doc: Doc, ...ops: Op[]) {
 
 const base = ok(
   empty,
-  { op: "create", id: "frame1", type: "frame", parent: null, position: "last", props: { name: "Home" } },
-  { op: "create", id: "sect01", type: "section", parent: "frame1", position: "last" },
-  { op: "create", id: "box001", type: "container", parent: "sect01", position: "last" },
-  { op: "create", id: "box002", type: "container", parent: "box001", position: "last" },
+  { op: "create", id: "frame1", type: "frame", parent: null, placement: "last", props: { name: "Home" } },
+  { op: "create", id: "sect01", type: "section", parent: "frame1", placement: "last" },
+  { op: "create", id: "box001", type: "container", parent: "sect01", placement: "last" },
+  { op: "create", id: "box002", type: "container", parent: "box001", placement: "last" },
 );
 
 const ids = (doc: Doc, parent: string | null) => childrenOf(doc.objects, parent).map(([id]) => id);
@@ -37,37 +37,37 @@ describe("create", () => {
   it("위치 지정으로 형제 순서를 정한다", () => {
     const doc = ok(
       base,
-      { op: "create", id: "txt001", type: "text", parent: "sect01", position: "first" },
-      { op: "create", id: "txt002", type: "text", parent: "sect01", position: { after: "txt001" } },
-      { op: "create", id: "txt003", type: "text", parent: "sect01", position: { before: "box001" } },
+      { op: "create", id: "txt001", type: "text", parent: "sect01", placement: "first" },
+      { op: "create", id: "txt002", type: "text", parent: "sect01", placement: { after: "txt001" } },
+      { op: "create", id: "txt003", type: "text", parent: "sect01", placement: { before: "box001" } },
     );
     expect(ids(doc, "sect01")).toEqual(["txt001", "txt002", "txt003", "box001"]);
   });
 
   it("중복·예약 ID를 거부한다", () => {
-    expect(code(base, { op: "create", id: "box001", type: "container", parent: "sect01", position: "last" })).toBe(
+    expect(code(base, { op: "create", id: "box001", type: "container", parent: "sect01", placement: "last" })).toBe(
       "ID_CONFLICT",
     );
-    expect(code(base, { op: "create", id: "_hidden", type: "container", parent: "sect01", position: "last" })).toBe(
+    expect(code(base, { op: "create", id: "_hidden", type: "container", parent: "sect01", placement: "last" })).toBe(
       "ID_CONFLICT",
     );
   });
 
   it("부모 규칙을 지킨다", () => {
-    expect(code(base, { op: "create", id: "sect02", type: "section", parent: "box001", position: "last" })).toBe(
+    expect(code(base, { op: "create", id: "sect02", type: "section", parent: "box001", placement: "last" })).toBe(
       "INVALID_PARENT",
     );
-    expect(code(base, { op: "create", id: "txt001", type: "text", parent: null, position: "last" })).toBe(
+    expect(code(base, { op: "create", id: "txt001", type: "text", parent: null, placement: "last" })).toBe(
       "INVALID_PARENT",
     );
-    expect(code(base, { op: "create", id: "txt001", type: "text", parent: "nobody", position: "last" })).toBe(
+    expect(code(base, { op: "create", id: "txt001", type: "text", parent: "nobody", placement: "last" })).toBe(
       "UNKNOWN_OBJECT",
     );
   });
 
   it("기준 노드가 형제가 아니면 거부한다", () => {
     expect(
-      code(base, { op: "create", id: "txt001", type: "text", parent: "sect01", position: { after: "box002" } }),
+      code(base, { op: "create", id: "txt001", type: "text", parent: "sect01", placement: { after: "box002" } }),
     ).toBe("VALUE_INVALID");
   });
 });
@@ -99,20 +99,20 @@ describe("set", () => {
 
 describe("move", () => {
   it("부모와 순서를 바꾼다", () => {
-    const doc = ok(base, { op: "move", id: "box002", parent: "sect01", position: "first" });
+    const doc = ok(base, { op: "move", id: "box002", parent: "sect01", placement: "first" });
     expect(ids(doc, "sect01")).toEqual(["box002", "box001"]);
     expect(ids(doc, "box001")).toEqual([]);
   });
 
   it("같은 부모 안에서 뒤로 옮긴다", () => {
-    const a = ok(base, { op: "create", id: "txt001", type: "text", parent: "sect01", position: "first" });
-    const b = ok(a, { op: "move", id: "txt001", parent: "sect01", position: { after: "box001" } });
+    const a = ok(base, { op: "create", id: "txt001", type: "text", parent: "sect01", placement: "first" });
+    const b = ok(a, { op: "move", id: "txt001", parent: "sect01", placement: { after: "box001" } });
     expect(ids(b, "sect01")).toEqual(["box001", "txt001"]);
   });
 
   it("순환을 거부한다", () => {
-    expect(code(base, { op: "move", id: "box001", parent: "box002", position: "last" })).toBe("TREE_CYCLE");
-    expect(code(base, { op: "move", id: "box001", parent: "box001", position: "last" })).toBe("TREE_CYCLE");
+    expect(code(base, { op: "move", id: "box001", parent: "box002", placement: "last" })).toBe("TREE_CYCLE");
+    expect(code(base, { op: "move", id: "box001", parent: "box001", placement: "last" })).toBe("TREE_CYCLE");
   });
 });
 
