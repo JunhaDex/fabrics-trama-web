@@ -48,7 +48,7 @@ export type Scan = { contentH: number; over: { id: string; r: Rect }[]; clipped:
 
 /**
  * Frame의 렌더 결과를 검사한다. contentH는 내용 높이, clipped는 clip으로 자식을 자르고 있는 노드다.
- * over는 부모 밖으로 가로로 넘친 노드이며, 미리보기 폭이 minWidth 이상일 때만 검사한다(그보다 좁으면 넘침이 의도된 것이다).
+ * over는 부모 밖으로 가로로 넘친 노드이며, checkOver가 참일 때만 검사한다.
  */
 export function scan(el: HTMLIFrameElement, checkOver: boolean): Scan | null {
   const d = el.contentDocument;

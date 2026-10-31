@@ -39,7 +39,6 @@ export function Board() {
     return () => ro.disconnect();
   }, []);
 
-  // 보드 뷰포트(여백 포함)와 겹치고 충분히 확대된 Frame만 실제 iframe으로 띄운다.
   const live = (id: string, f: Obj) => {
     if (!size.w) return true;
     if (view.zoom < 0.25) return false;

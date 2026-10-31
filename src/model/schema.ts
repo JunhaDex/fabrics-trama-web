@@ -136,7 +136,7 @@ export const KEYS: Record<ObjType, Record<string, z.ZodType>> = {
   },
 };
 
-/** 키가 `@bp:` 조건을 받을 수 있는지. 구조·텍스트 키와 position은 모든 BP에 같아야 하므로 받지 않는다. */
+/** 키가 `@bp:` 조건을 받을 수 있는지. */
 export function bpAllowed(key: string) {
   return /^(layout|size|grid|style)\./.test(key) || ["x", "y", "w", "h", "hidden", "src"].includes(key);
 }

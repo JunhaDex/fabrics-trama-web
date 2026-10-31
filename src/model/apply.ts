@@ -163,7 +163,6 @@ function apply(o: Objects, op: Op) {
       checkParent(o, obj.type, op.id, op.parent);
       const from = frameOf(o, op.id);
       o[op.id] = { ...obj, parent: op.parent, order: orderAt(o, op.parent, op.placement, op.id) };
-      // 다른 Frame으로 옮기면 원래 Frame의 BP를 가리키는 override는 대상이 없으므로 같은 트랜잭션에서 지운다.
       if (frameOf(o, op.id) !== from) for (const id of subtree(o, op.id)) strip(o, id, () => true);
       return;
     }
