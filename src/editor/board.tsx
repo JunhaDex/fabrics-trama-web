@@ -239,6 +239,27 @@ const FrameView = memo(function FrameView({ id, frame, doc, onLoad, hair, live }
   );
 });
 
+const drawnWidth = (f: Obj) => Math.max(frameBox(f).w, (f.minWidth as number) ?? 320);
+
+/** Frame 미리보기 폭을 바꾸고, 오른쪽에 있으면서 세로로 겹치는 Frame을 폭 변화만큼 함께 옮긴다. */
+function resizeFrame(doc: Doc, id: string, width: number) {
+  const f = doc.objects[id];
+  const b = frameBox(f);
+  const delta = Math.max(width, (f.minWidth as number) ?? 320) - drawnWidth(f);
+  const { heights } = useEditor.getState();
+  const bottom = (fid: string, o: Obj) => frameBox(o).y + Math.max(frameBox(o).h, heights[fid] ?? 0);
+  const shifted = delta
+    ? childrenOf(doc.objects, null).filter(([oid, o]) => {
+        const ob = frameBox(o);
+        return oid !== id && ob.x >= b.x + drawnWidth(f) && ob.y < bottom(id, f) && bottom(oid, o) > b.y;
+      })
+    : [];
+  apply(
+    { op: "set", id, props: { previewWidth: width } },
+    ...shifted.map(([oid, o]) => ({ op: "set" as const, id: oid, props: { boardX: frameBox(o).x + delta } })),
+  );
+}
+
 function FrameBar({ id, frame, doc }: { id: string; frame: Obj; doc: Doc }) {
   const active = activeBp(doc, id);
   const minWidth = (frame.minWidth as number) ?? 320;
@@ -256,7 +277,7 @@ function FrameBar({ id, frame, doc }: { id: string; frame: Obj; doc: Doc }) {
         <button
           key={bid ?? "base"}
           type="button"
-          onClick={() => apply({ op: "set", id, props: { previewWidth: width } })}
+          onClick={() => resizeFrame(doc, id, width)}
           className={`rounded px-1.5 py-0.5 ${bid === active ? "bg-brand text-on-brand" : "text-on-surface-muted hover:bg-surface-raised"}`}
         >
           {name} {bid && <span className="opacity-70">{width}</span>}
