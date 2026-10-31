@@ -226,3 +226,72 @@ describe("revert", () => {
     expect(undo.changes).toEqual([{ id: "box001", key: "hidden", before: true, after: undefined }]);
   });
 });
+
+describe("token", () => {
+  const rgb = (r: number, g: number, b: number) => ({ colorSpace: "srgb", components: [r, g, b] });
+  const tok = (id: string, props: object) => ({ op: "create", id, type: "token", parent: null, props }) as Op;
+  const blue = rgb(0.2, 0.4, 1);
+  const withTokens = ok(
+    base,
+    { op: "create", id: "palette", type: "modifier", parent: null, props: { name: "palette", contexts: ["brand", "mono"], default: "brand" } },
+    tok("tkBlue1", { name: "color.blue", tokenType: "color", value: blue, variesBy: "palette", "value@ctx:mono": rgb(0.5, 0.5, 0.5) }),
+    tok("tkPrim1", { name: "color.primary", tokenType: "color", value: { ref: "tkBlue1" }, variesBy: "_mode", "value@ctx:dark": rgb(1, 1, 1) }),
+    tok("tkSpace", { name: "space.md", tokenType: "dimension", value: { value: 16, unit: "px" } }),
+  );
+
+  it("토큰과 modifier를 만들고 노드에 바인딩한다", () => {
+    const r = run(withTokens, { op: "set", id: "box001", props: { "style.background-color": { token: "tkPrim1" }, "layout.gap": { token: "tkSpace" } } });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.warnings).toEqual([{ code: "RAW_TOKEN_BOUND", id: "box001", key: "layout.gap" }]);
+  });
+
+  it("토큰 값과 참조를 검증한다", () => {
+    expect(code(withTokens, tok("tkBad01", { name: "x.y", tokenType: "color", value: { value: 1, unit: "px" } }))).toBe("VALUE_INVALID");
+    expect(code(withTokens, tok("tkBad01", { name: "x.y", tokenType: "dimension", value: { ref: "tkBlue1" } }))).toBe("TOKEN_TYPE_MISMATCH");
+    expect(code(withTokens, tok("tkBad01", { name: "x.y", tokenType: "color", value: { ref: "nobody" } }))).toBe("UNKNOWN_OBJECT");
+    expect(code(withTokens, tok("tkBad01", { name: "color.blue", tokenType: "color", value: blue }))).toBe("NAME_CONFLICT");
+    expect(code(withTokens, tok("tkBad01", { name: "x.y", tokenType: "color" }))).toBe("VALUE_INVALID");
+    expect(code(withTokens, tok("tkBad01", { name: "font.body", tokenType: "fontFamily", value: ["Pretendard"] }))).toBe("VALUE_INVALID");
+    expect(code(withTokens, tok("tkFont1", { name: "font.body", tokenType: "fontFamily", value: ["Pretendard", "sans-serif"] }))).toBe(null);
+  });
+
+  it("컨텍스트 키를 검증한다", () => {
+    expect(code(withTokens, { op: "set", id: "tkSpace", props: { "value@ctx:dark": { value: 8, unit: "px" } } })).toBe("CONDITION_TARGET_MISSING");
+    expect(code(withTokens, { op: "set", id: "tkSpace", props: { "value@bp:bp0768": { value: 8, unit: "px" } } })).toBe("KEY_INVALID");
+    expect(code(withTokens, { op: "set", id: "tkSpace", props: { variesBy: "nobody" } })).toBe("UNKNOWN_OBJECT");
+  });
+
+  it("variesBy를 바꾸면 이전 컨텍스트 값을 지운다", () => {
+    const doc = ok(withTokens, { op: "set", id: "tkBlue1", props: { variesBy: "_mode", "value@ctx:dark": rgb(0, 0, 0.5) } });
+    expect(Object.keys(doc.objects.tkBlue1).filter((k) => k.includes("@ctx"))).toEqual(["value@ctx:dark"]);
+  });
+
+  it("modifier 컨텍스트에서 빠진 값을 지운다", () => {
+    const doc = ok(withTokens, { op: "set", id: "palette", props: { contexts: ["brand", "warm"] } });
+    expect("value@ctx:mono" in doc.objects.tkBlue1).toBe(false);
+    expect(code(withTokens, { op: "set", id: "palette", props: { contexts: ["a1", "b1"] } })).toBe("VALUE_INVALID");
+  });
+
+  it("모든 컨텍스트 조합에서 순환을 거부한다", () => {
+    // mono × light 조합에서만 blue → primary → blue로 순환한다
+    expect(code(withTokens, { op: "set", id: "tkBlue1", props: { "value@ctx:mono": { ref: "tkPrim1" } } })).toBe("TOKEN_CYCLE");
+    expect(code(withTokens, { op: "set", id: "tkPrim1", props: { "value@ctx:dark": { ref: "tkBlue1" } } })).toBe(null);
+    expect(code(withTokens, { op: "set", id: "tkBlue1", props: { value: { ref: "tkPrim1" } } })).toBe("TOKEN_CYCLE");
+    expect(code(withTokens, { op: "set", id: "tkSpace", props: { value: { ref: "tkSpace" } } })).toBe("TOKEN_CYCLE");
+  });
+
+  it("쓰이는 토큰과 modifier는 지울 수 없다", () => {
+    const bound = ok(withTokens, { op: "set", id: "box001", props: { "layout.gap": { token: "tkSpace" } } });
+    expect(code(bound, { op: "delete", id: "tkSpace" })).toBe("TOKEN_IN_USE");
+    expect(code(withTokens, { op: "delete", id: "tkBlue1" })).toBe("TOKEN_IN_USE");
+    expect(code(withTokens, { op: "delete", id: "palette" })).toBe("TOKEN_IN_USE");
+    expect(code(withTokens, { op: "delete", id: "tkPrim1" })).toBe(null);
+  });
+
+  it("바인딩 타입과 기본 제공 modifier를 검증한다", () => {
+    expect(code(withTokens, { op: "set", id: "box001", props: { "layout.gap": { token: "tkBlue1" } } })).toBe("TOKEN_TYPE_MISMATCH");
+    expect(code(withTokens, { op: "set", id: "box001", props: { "style.font-family": "Arial" } })).toBe("VALUE_INVALID");
+    expect(code(withTokens, { op: "set", id: "_mode", props: { default: "dark" } })).toBe("STRUCTURE_LOCKED");
+    expect(code(withTokens, { op: "create", id: "mode02", type: "modifier", parent: null, props: { name: "mode", contexts: ["a", "b"], default: "a" } })).toBe("NAME_CONFLICT");
+  });
+});

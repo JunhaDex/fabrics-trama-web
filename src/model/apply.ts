@@ -1,6 +1,19 @@
 import { generateKeyBetween } from "fractional-indexing";
 import { z } from "zod";
-import { bpAllowed, KEYS, PARENTS, Tx, type ObjType, type Op, type Placement } from "./schema";
+import {
+  BIND_TYPE,
+  bpAllowed,
+  KEYS,
+  NODE_TYPES,
+  PARENTS,
+  TOKEN_VALUE,
+  TokenRef,
+  Tx,
+  type ObjType,
+  type Op,
+  type Placement,
+  type TokenType,
+} from "./schema";
 
 export type Obj = { type: ObjType; parent: string | null; order?: string } & Record<string, unknown>;
 export type Objects = Record<string, Obj>;
@@ -17,7 +30,14 @@ export type ErrorCode =
   | "KEY_NOT_ALLOWED"
   | "CONDITION_NOT_ALLOWED"
   | "CONDITION_TARGET_MISSING"
-  | "VALUE_INVALID";
+  | "VALUE_INVALID"
+  | "TOKEN_TYPE_MISMATCH"
+  | "TOKEN_CYCLE"
+  | "TOKEN_IN_USE"
+  | "NAME_CONFLICT"
+  | "STRUCTURE_LOCKED";
+
+export type Warning = { code: "TOKEN_DEPRECATED" | "RAW_TOKEN_BOUND"; id: string; key: string };
 
 export type OpError = {
   code: ErrorCode;
@@ -29,7 +49,7 @@ export type OpError = {
 
 export type Change = { id: string; key: string; before: unknown; after: unknown };
 
-export type Result = { ok: true; doc: Doc; changes: Change[] } | { ok: false; error: OpError };
+export type Result = { ok: true; doc: Doc; changes: Change[]; warnings: Warning[] } | { ok: false; error: OpError };
 
 class Reject extends Error {
   constructor(
@@ -60,15 +80,16 @@ export function applyOps(doc: Doc, input: unknown): Result {
   }
   const objects = { ...doc.objects };
   const ops = tx.data.ops;
+  const warnings: Warning[] = [];
   for (let i = 0; i < ops.length; i++) {
     try {
-      apply(objects, ops[i]);
+      apply(objects, ops[i], warnings);
     } catch (e) {
       if (!(e instanceof Reject)) throw e;
       return { ok: false, error: { code: e.code, opIndex: i, id: e.id, key: e.key, message: e.message } };
     }
   }
-  return { ok: true, doc: { ...doc, objects }, changes: diff(doc.objects, objects) };
+  return { ok: true, doc: { ...doc, objects }, changes: diff(doc.objects, objects), warnings };
 }
 
 /**
@@ -107,9 +128,38 @@ function diff(prev: Objects, next: Objects): Change[] {
 /** parent의 자식 노드를 (order, id) 사전순으로 돌려준다. parent가 null이면 보드 위 Frame이다. breakpoint는 포함하지 않는다. */
 export function childrenOf(objects: Objects, parent: string | null): [string, Obj][] {
   return Object.entries(objects)
-    .filter(([, o]) => o.parent === parent && o.type !== "breakpoint")
+    .filter(([, o]) => o.parent === parent && isNode(o))
     .sort(([a, x], [b, y]) => (x.order !== y.order ? (x.order! < y.order! ? -1 : 1) : a < b ? -1 : 1));
 }
+
+const isNode = (o: Obj) => (NODE_TYPES as readonly string[]).includes(o.type);
+
+/** 기본 제공 modifier. 문서에 저장하지 않으며 항상 있다. */
+export const MODE: Obj = { type: "modifier", parent: null, name: "mode", contexts: ["light", "dark"], default: "light" };
+
+/** modifier를 `_mode` 먼저, 이후 이름순으로 돌려준다. */
+export function modifiersOf(objects: Objects): [string, Obj][] {
+  const user = Object.entries(objects)
+    .filter(([, o]) => o.type === "modifier")
+    .sort(([, a], [, b]) => ((a.name as string) < (b.name as string) ? -1 : 1));
+  return [["_mode", MODE], ...user];
+}
+
+/** 토큰을 이름순으로 돌려준다. */
+export function tokensOf(objects: Objects): [string, Obj][] {
+  return Object.entries(objects)
+    .filter(([, o]) => o.type === "token")
+    .sort(([, a], [, b]) => ((a.name as string) < (b.name as string) ? -1 : 1));
+}
+
+/** 토큰이 컨텍스트 조합(modifier ID → 컨텍스트)에서 갖는 값. 원시값이거나 `{ ref }`다. */
+export function tokenValueAt(token: Obj, combo: Record<string, string>): unknown {
+  const by = token.variesBy as string | undefined;
+  const ctx = by ? combo[by] : undefined;
+  return (ctx !== undefined ? token[`value@ctx:${ctx}`] : undefined) ?? token.value;
+}
+
+const modifierOf = (o: Objects, id: string): Obj | undefined => (id === "_mode" ? MODE : o[id]?.type === "modifier" ? o[id] : undefined);
 
 /** Frame의 breakpoint를 minWidth 오름차순으로 돌려준다. */
 export function breakpointsOf(objects: Objects, frame: string): [string, Obj][] {
@@ -125,28 +175,34 @@ export function frameOf(objects: Objects, id: string): string {
   return cur;
 }
 
-function apply(o: Objects, op: Op) {
+function apply(o: Objects, op: Op, warnings: Warning[]) {
+  if (op.id === "_mode" && op.op !== "create") throw new Reject("STRUCTURE_LOCKED", op.id, null, "기본 제공 modifier는 바꿀 수 없다");
+  const tokenish = (t: ObjType) => t === "token" || t === "modifier";
   switch (op.op) {
     case "create": {
       if (Object.hasOwn(o, op.id) || op.id === "mode" || op.id.startsWith("_"))
         throw new Reject("ID_CONFLICT", op.id, null, "이미 있거나 예약된 ID다");
-      const node = op.type !== "breakpoint";
+      const node = (NODE_TYPES as readonly string[]).includes(op.type);
       if (node !== (op.placement !== undefined))
         throw new Reject("VALUE_INVALID", op.id, "placement", "노드는 placement가 필요하고, 노드가 아닌 객체는 placement를 받지 않는다");
       checkParent(o, op.type, op.id, op.parent);
       const props = op.props ?? {};
-      checkProps(o, op.type, op.id, op.parent === null ? op.id : frameOf(o, op.parent), props);
+      checkProps(o, op.type, op.id, op.parent === null ? op.id : frameOf(o, op.parent), props, warnings);
       const obj: Obj = { type: op.type, parent: op.parent };
       if (node) obj.order = orderAt(o, op.parent, op.placement!, op.id);
       for (const [k, v] of Object.entries(props)) if (v !== null) obj[k] = v;
       o[op.id] = obj;
-      if (!node) checkBreakpoints(o, op.parent!, op.id);
+      if (op.type === "breakpoint") checkBreakpoints(o, op.parent!, op.id);
+      if (tokenish(op.type)) checkTokens(o);
       return;
     }
     case "set": {
       const obj = get(o, op.id);
-      checkProps(o, obj.type, op.id, frameOf(o, op.id), op.props);
+      checkProps(o, obj.type, op.id, frameOf(o, op.id), op.props, warnings);
       const next = { ...obj };
+      // variesBy가 바뀌면 이전 기준의 @ctx 값은 의미가 없으므로 지운다. 같은 연산에서 준 @ctx 값은 아래에서 다시 쓴다.
+      if (obj.type === "token" && "variesBy" in op.props && op.props.variesBy !== obj.variesBy)
+        for (const k of Object.keys(next)) if (k.startsWith("value@ctx:")) delete next[k];
       for (const [k, v] of Object.entries(op.props)) {
         if (v === null) delete next[k];
         else next[k] = v;
@@ -154,11 +210,13 @@ function apply(o: Objects, op: Op) {
       o[op.id] = next;
       if (obj.type === "breakpoint") checkBreakpoints(o, obj.parent!, op.id);
       else if (obj.type === "frame" && "minWidth" in op.props) checkBreakpoints(o, op.id, op.id);
+      if (obj.type === "modifier" && "contexts" in op.props) dropContexts(o, op.id);
+      if (tokenish(obj.type)) checkTokens(o);
       return;
     }
     case "move": {
       const obj = get(o, op.id);
-      if (obj.type === "breakpoint") throw new Reject("INVALID_PARENT", op.id, null, "breakpoint는 옮길 수 없다");
+      if (!isNode(obj)) throw new Reject("INVALID_PARENT", op.id, null, `${obj.type}는 옮길 수 없다`);
       if (op.placement === undefined) throw new Reject("VALUE_INVALID", op.id, "placement", "move에는 placement가 필요하다");
       checkParent(o, obj.type, op.id, op.parent);
       const from = frameOf(o, op.id);
@@ -168,6 +226,9 @@ function apply(o: Objects, op: Op) {
     }
     case "delete": {
       const obj = get(o, op.id);
+      if (obj.type === "token") checkUnused(o, op.id);
+      if (obj.type === "modifier" && Object.values(o).some((t) => t.type === "token" && t.variesBy === op.id))
+        throw new Reject("TOKEN_IN_USE", op.id, null, "이 modifier에 따라 달라지는 토큰이 있다");
       for (const id of subtree(o, op.id)) delete o[id];
       if (obj.type === "breakpoint") for (const id of Object.keys(o)) strip(o, id, (bp) => bp === op.id);
       return;
@@ -209,14 +270,17 @@ function get(o: Objects, id: string): Obj {
   return o[id];
 }
 
-function checkProps(o: Objects, type: ObjType, id: string, frame: string, props: Record<string, unknown>) {
+function checkProps(o: Objects, type: ObjType, id: string, frame: string, props: Record<string, unknown>, warnings: Warning[]) {
   for (const [k, v] of Object.entries(props)) {
     if (k === "type") throw new Reject("TYPE_IMMUTABLE", id, k, "type은 바꿀 수 없다");
     const at = k.indexOf("@");
     const base = at < 0 ? k : k.slice(0, at);
     if (!Object.hasOwn(KEYS[type], base))
       throw new Reject("KEY_NOT_ALLOWED", id, k, `${type}에 없는 키다. parent·order는 move로 바꾼다`);
-    if (at >= 0) {
+    if (type === "token" && at >= 0) {
+      if (base !== "value" || !/^@ctx:[a-z][a-z0-9-]*$/.test(k.slice(at)))
+        throw new Reject("KEY_INVALID", id, k, "토큰의 조건 키는 value@ctx:<컨텍스트>만 쓴다");
+    } else if (at >= 0) {
       const cond = k.slice(at);
       if (/^@(var|state):/.test(cond)) throw new Reject("CONDITION_NOT_ALLOWED", id, k, "@var·@state는 컴포넌트 원본에서만 쓴다");
       const m = /^@bp:([A-Za-z0-9_-]{6,32})$/.exec(cond);
@@ -228,6 +292,97 @@ function checkProps(o: Objects, type: ObjType, id: string, frame: string, props:
         throw new Reject("CONDITION_TARGET_MISSING", id, k, "같은 Frame의 breakpoint가 아니다");
     }
     if (v !== null && !KEYS[type][base].safeParse(v).success) throw new Reject("VALUE_INVALID", id, k, "값 형식이 맞지 않는다");
+    if (v !== null && typeof v === "object" && "token" in v) checkBinding(o, id, k, base, (v as { token: string }).token, warnings);
+  }
+}
+
+function checkBinding(o: Objects, id: string, k: string, base: string, ref: string, warnings: Warning[]) {
+  const t = o[ref];
+  if (!t || t.type !== "token") throw new Reject("UNKNOWN_OBJECT", ref, k, "바인딩한 토큰이 없다");
+  if (t.tokenType !== BIND_TYPE[base])
+    throw new Reject("TOKEN_TYPE_MISMATCH", id, k, `${base}에는 ${BIND_TYPE[base]} 토큰만 바인딩한다`);
+  if (t.deprecated) warnings.push({ code: "TOKEN_DEPRECATED", id, key: k });
+  if (!TokenRef.safeParse(t.value).success) warnings.push({ code: "RAW_TOKEN_BOUND", id, key: k });
+}
+
+/** 노드 바인딩이나 다른 토큰의 참조가 가리키는 토큰은 지울 수 없다. */
+function checkUnused(o: Objects, token: string) {
+  for (const [id, x] of Object.entries(o))
+    for (const [k, v] of Object.entries(x)) {
+      const r = v as { token?: string; ref?: string } | null;
+      if (typeof r === "object" && r && (r.token === token || r.ref === token))
+        throw new Reject("TOKEN_IN_USE", token, null, `${id}의 ${k}가 이 토큰을 쓴다`);
+    }
+}
+
+/** modifier에서 빠진 컨텍스트의 토큰 값을 지운다. */
+function dropContexts(o: Objects, modifier: string) {
+  const keep = new Set((o[modifier].contexts as string[] | undefined) ?? []);
+  for (const [id, t] of Object.entries(o)) {
+    if (t.type !== "token" || t.variesBy !== modifier) continue;
+    const gone = Object.keys(t).filter((k) => k.startsWith("value@ctx:") && !keep.has(k.slice(10)));
+    if (!gone.length) continue;
+    const next = { ...t };
+    for (const k of gone) delete next[k];
+    o[id] = next;
+  }
+}
+
+/** 토큰과 modifier의 일관성을 검사한다: 이름 유일, 필수 키, 값 형식, 참조 타입, 컨텍스트, 순환. */
+function checkTokens(o: Objects) {
+  const names = new Map<string, string>([["modifier:mode", "_mode"]]);
+  const unique = (kind: string, id: string, name: unknown) => {
+    const key = `${kind}:${name}`;
+    if (names.has(key) && names.get(key) !== id) throw new Reject("NAME_CONFLICT", id, "name", `${name} 이름이 이미 있다`);
+    names.set(key, id);
+  };
+  for (const [id, m] of Object.entries(o)) {
+    if (m.type !== "modifier") continue;
+    if (!m.name || !m.contexts || !m.default) throw new Reject("VALUE_INVALID", id, null, "modifier에는 name·contexts·default가 필요하다");
+    unique("modifier", id, m.name);
+    if (!(m.contexts as string[]).includes(m.default as string))
+      throw new Reject("VALUE_INVALID", id, "default", "default는 contexts 중 하나여야 한다");
+  }
+  const tokens = tokensOf(o);
+  for (const [id, t] of tokens) {
+    if (!t.name || !t.tokenType || t.value === undefined)
+      throw new Reject("VALUE_INVALID", id, null, "토큰에는 name·tokenType·value가 필요하다");
+    unique("token", id, t.name);
+    const by = t.variesBy as string | undefined;
+    const mod = by === undefined ? undefined : modifierOf(o, by);
+    if (by !== undefined && !mod) throw new Reject("UNKNOWN_OBJECT", by, "variesBy", "variesBy가 가리키는 modifier가 없다");
+    for (const [k, v] of Object.entries(t)) {
+      if (k !== "value" && !k.startsWith("value@ctx:")) continue;
+      if (k !== "value" && !(mod?.contexts as string[] | undefined)?.includes(k.slice(10)))
+        throw new Reject("CONDITION_TARGET_MISSING", id, k, "variesBy modifier의 컨텍스트가 아니다");
+      const ref = TokenRef.safeParse(v);
+      if (ref.success) {
+        const target = o[ref.data.ref];
+        if (!target || target.type !== "token") throw new Reject("UNKNOWN_OBJECT", ref.data.ref, k, "참조한 토큰이 없다");
+        if (target.tokenType !== t.tokenType) throw new Reject("TOKEN_TYPE_MISMATCH", id, k, "참조 대상의 tokenType이 다르다");
+      } else if (!TOKEN_VALUE[t.tokenType as TokenType].safeParse(v).success)
+        throw new Reject("VALUE_INVALID", id, k, `${t.tokenType} 값 형식이 맞지 않는다`);
+    }
+  }
+  checkCycles(o, tokens);
+}
+
+/** 모든 modifier 컨텍스트 조합에서 참조를 따라가 순환이 있는지 검사한다. */
+function checkCycles(o: Objects, tokens: [string, Obj][]) {
+  let combos: Record<string, string>[] = [{}];
+  for (const [mid, m] of modifiersOf(o))
+    combos = combos.flatMap((c) => (m.contexts as string[]).map((ctx) => ({ ...c, [mid]: ctx })));
+  for (const combo of combos) {
+    const state = new Map<string, 1 | 2>();
+    const visit = (id: string) => {
+      if (state.get(id) === 2) return;
+      if (state.get(id) === 1) throw new Reject("TOKEN_CYCLE", id, null, `참조가 순환한다 (${Object.values(combo).join(", ")})`);
+      state.set(id, 1);
+      const ref = TokenRef.safeParse(tokenValueAt(o[id], combo));
+      if (ref.success) visit(ref.data.ref);
+      state.set(id, 2);
+    };
+    for (const [id] of tokens) visit(id);
   }
 }
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const Id = z.string().regex(/^[A-Za-z0-9_-]{6,32}$/);
+export const Id = z.string().regex(/^(?:[A-Za-z0-9_-]{6,32}|_[a-z]{1,31})$/);
 
 // refine은 JSON Schema로 변환되지 않으므로 description으로 계약에 남긴다.
 const num4 = z
@@ -22,12 +22,40 @@ export const Color = z.strictObject({
   alpha: unit.optional(),
 });
 
+export const TOKEN_TYPES = ["color", "dimension", "fontFamily", "fontWeight", "number"] as const;
+export type TokenType = (typeof TOKEN_TYPES)[number];
+
+const GENERIC = ["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded", "math", "emoji", "fangsong"];
+
+/** 토큰 타입별 원시값 형식. 참조(`{ ref }`)는 별도로 받는다. */
+export const TOKEN_VALUE: Record<TokenType, z.ZodType> = {
+  color: Color,
+  dimension: Dimension,
+  fontFamily: z
+    .union([z.string().min(1), z.array(z.string().min(1)).min(1)])
+    .refine((v) => GENERIC.includes(Array.isArray(v) ? v[v.length - 1] : v))
+    .meta({ description: "마지막 항목은 일반 계열(sans-serif 등)" }),
+  fontWeight: z.number().int().min(1).max(1000),
+  number: z.number().finite(),
+};
+
+export const TokenRef = z.strictObject({ ref: Id });
+export const TokenBinding = z.strictObject({ token: Id });
+
+/** 토큰을 바인딩할 수 있는 노드 키와 그 키가 받는 토큰 타입. */
+export const BIND_TYPE: Record<string, TokenType> = {};
+const bind = <T extends z.ZodType>(key: string, type: TokenType, s: T) => {
+  BIND_TYPE[key] = type;
+  return z.union([s, TokenBinding]);
+};
+
 const intMin1 = z.number().int().min(1);
-const size = z.union([z.enum(["fill", "hug"]), Dimension]);
+const sizeOf = (key: string) => bind(key, "dimension", z.union([z.enum(["fill", "hug"]), Dimension]));
+const dim = (key: string) => bind(key, "dimension", Dimension);
 
 export const NODE_TYPES = ["frame", "section", "container", "text", "image"] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
-export const OBJ_TYPES = [...NODE_TYPES, "breakpoint"] as const;
+export const OBJ_TYPES = [...NODE_TYPES, "breakpoint", "modifier", "token"] as const;
 export type ObjType = (typeof OBJ_TYPES)[number];
 
 const common = {
@@ -37,8 +65,8 @@ const common = {
 
 const layout = {
   "layout.mode": z.enum(["flex-row", "flex-column", "grid"]),
-  "layout.gap": Dimension,
-  "layout.rowGap": Dimension,
+  "layout.gap": dim("layout.gap"),
+  "layout.rowGap": dim("layout.rowGap"),
   "layout.justify": z.enum(["start", "center", "end", "space-between", "space-around", "space-evenly"]),
   "layout.align": z.enum(["start", "center", "end", "stretch", "baseline"]),
   "layout.wrap": z.boolean(),
@@ -47,12 +75,12 @@ const layout = {
 };
 
 const child = {
-  "size.width": size,
-  "size.height": size,
-  "size.minWidth": Dimension,
-  "size.maxWidth": Dimension,
-  "size.minHeight": Dimension,
-  "size.maxHeight": Dimension,
+  "size.width": sizeOf("size.width"),
+  "size.height": sizeOf("size.height"),
+  "size.minWidth": dim("size.minWidth"),
+  "size.maxWidth": dim("size.maxWidth"),
+  "size.minHeight": dim("size.minHeight"),
+  "size.maxHeight": dim("size.maxHeight"),
   "grid.colStart": intMin1,
   "grid.colSpan": intMin1,
   "grid.rowStart": intMin1,
@@ -65,21 +93,22 @@ const child = {
 };
 
 const text = {
-  "style.color": Color,
-  "style.font-size": Dimension,
-  "style.font-weight": z.number().int().min(100).max(900).multipleOf(100),
+  "style.color": bind("style.color", "color", Color),
+  "style.font-size": dim("style.font-size"),
+  "style.font-weight": bind("style.font-weight", "fontWeight", z.number().int().min(100).max(900).multipleOf(100)),
+  "style.font-family": bind("style.font-family", "fontFamily", z.never()),
 };
 
 const box = {
-  "style.background-color": Color,
-  "style.padding-top": Dimension,
-  "style.padding-right": Dimension,
-  "style.padding-bottom": Dimension,
-  "style.padding-left": Dimension,
-  "style.border-width": Dimension,
+  "style.background-color": bind("style.background-color", "color", Color),
+  "style.padding-top": dim("style.padding-top"),
+  "style.padding-right": dim("style.padding-right"),
+  "style.padding-bottom": dim("style.padding-bottom"),
+  "style.padding-left": dim("style.padding-left"),
+  "style.border-width": dim("style.border-width"),
   "style.border-style": z.enum(["none", "solid", "dashed", "dotted"]),
-  "style.border-color": Color,
-  "style.border-radius": Dimension,
+  "style.border-color": bind("style.border-color", "color", Color),
+  "style.border-radius": dim("style.border-radius"),
 };
 
 const tag = (tags: [string, ...string[]]) => ({ tag: z.enum(tags) });
@@ -88,6 +117,19 @@ export const KEYS: Record<ObjType, Record<string, z.ZodType>> = {
   breakpoint: {
     name: z.string(),
     minWidth: z.number().int().positive(),
+  },
+  modifier: {
+    name: z.string().regex(/^[a-z][a-z0-9-]*$/),
+    contexts: z.array(z.string().regex(/^[a-z][a-z0-9-]*$/)).min(2).refine((a) => new Set(a).size === a.length),
+    default: z.string(),
+  },
+  token: {
+    name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)*$/),
+    tokenType: z.enum(TOKEN_TYPES),
+    value: z.unknown().meta({ description: "tokenType의 원시값 또는 { ref: 토큰 ID }" }),
+    variesBy: Id,
+    description: z.string(),
+    deprecated: z.boolean(),
   },
   frame: {
     ...common,
@@ -100,7 +142,7 @@ export const KEYS: Record<ObjType, Record<string, z.ZodType>> = {
     minWidth: z.number().finite().positive(),
     safeArea: z.boolean(),
     ...text,
-    "style.background-color": Color,
+    "style.background-color": bind("style.background-color", "color", Color),
   },
   section: {
     ...common,
@@ -143,6 +185,8 @@ export function bpAllowed(key: string) {
 
 export const PARENTS: Record<ObjType, (ObjType | null)[]> = {
   breakpoint: ["frame"],
+  modifier: [null],
+  token: [null],
   frame: [null],
   section: ["frame"],
   container: ["frame", "section", "container"],
