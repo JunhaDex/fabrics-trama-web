@@ -1,7 +1,5 @@
 import type { El, Page } from "./build";
 
-// 중간 트리 → 문자열. 세 출력이 같은 트리를 쓴다.
-
 type Opts = { dataId: boolean; dataLayout: boolean };
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -40,7 +38,7 @@ function html(page: Page, head: string, opts: Opts): string {
   ].join("\n");
 }
 
-// 내보내기용. HTML은 style.css를 참조한다.
+/** 내보내기용 HTML과 CSS. HTML은 같은 위치의 style.css를 참조한다. */
 export function toExport(page: Page): { html: string; css: string } {
   return {
     html: html(page, '<link rel="stylesheet" href="style.css">', { dataId: false, dataLayout: false }),
@@ -48,12 +46,12 @@ export function toExport(page: Page): { html: string; css: string } {
   };
 }
 
-// 편집기 iframe용. CSS를 인라인하고 data-id를 붙인다.
+/** 편집기 iframe의 srcdoc. CSS를 인라인하고 요소마다 data-id를 붙인다. */
 export function toSrcdoc(page: Page): string {
   return html(page, `<style>\n${css(page)}</style>`, { dataId: true, dataLayout: false });
 }
 
-// AI 읽기용. body 마크업만 data-id·data-layout과 함께 낸다.
+/** AI 읽기용 body 마크업. CSS 없이 data-id와 data-layout을 붙인다. */
 export function toAnnotated(page: Page): string {
   return el(page.body, { dataId: true, dataLayout: true }, 0) + "\n";
 }

@@ -1,7 +1,5 @@
 import { childrenOf, type Doc, type Obj } from "../model";
 
-// 문서 → 중간 트리. 규칙은 docs/architecture/trama-html-conversion.md.
-
 export type Decl = [prop: string, value: string];
 export type Rule = { sel: string; decls: Decl[] };
 export type El = {

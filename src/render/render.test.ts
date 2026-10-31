@@ -10,7 +10,6 @@ function doc(...ops: Op[]): Doc {
 
 const px = (value: number) => ({ value, unit: "px" });
 
-// 레이아웃 모드 4종과 sizing을 모두 거치는 문서
 const pricing = doc(
   { op: "create", id: "frame1", type: "frame", parent: null, placement: "last", props: { name: "Pricing & Plans", safeArea: true } },
   { op: "create", id: "head01", type: "section", parent: "frame1", placement: "last",

@@ -1,14 +1,13 @@
 import { z } from "zod";
 
-// 계약: docs/architecture/trama-document-model.md. v0.2는 노드 5종의 base 키만 다룬다.
-
 export const Id = z.string().regex(/^[A-Za-z0-9_-]{6,32}$/);
 
-// 소수 넷째 자리까지만 허용한다(4절).
+// refine은 JSON Schema로 변환되지 않으므로 description으로 계약에 남긴다.
 const num4 = z
   .number()
   .finite()
-  .refine((n) => Math.round(n * 1e4) / 1e4 === n);
+  .refine((n) => Math.round(n * 1e4) / 1e4 === n)
+  .meta({ description: "소수 넷째 자리까지" });
 
 export const Dimension = z.strictObject({
   value: num4,
@@ -48,7 +47,6 @@ const child = {
   "grid.colSpan": intMin1,
   "grid.rowStart": intMin1,
   "grid.rowSpan": intMin1,
-  // absolute로 바꾸는 순간 편집기가 측정한 rect(부모 좌상단 기준 px)를 저장한다.
   position: z.enum(["static", "absolute"]),
   x: num4,
   y: num4,
@@ -58,7 +56,6 @@ const child = {
 
 const tag = (tags: [string, ...string[]]) => ({ tag: z.enum(tags) });
 
-// 종류별 허용 키와 값 스키마. parent·order·type은 연산이 직접 다룬다.
 export const KEYS: Record<NodeType, Record<string, z.ZodType>> = {
   frame: {
     ...common,
@@ -98,7 +95,6 @@ export const KEYS: Record<NodeType, Record<string, z.ZodType>> = {
   },
 };
 
-// 3절 부모 규칙. null은 보드(루트)다.
 export const PARENTS: Record<NodeType, (NodeType | null)[]> = {
   frame: [null],
   section: ["frame"],

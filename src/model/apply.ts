@@ -37,7 +37,7 @@ class Reject extends Error {
   }
 }
 
-// 트랜잭션 전체를 적용하거나 전부 거부한다. 입력 doc은 바꾸지 않는다.
+/** 트랜잭션을 검증해 적용한 새 문서를 돌려준다. 연산 하나라도 실패하면 전부 거부하며, 입력 doc은 바꾸지 않는다. */
 export function applyOps(doc: Doc, input: unknown): Result {
   const tx = Tx.safeParse(input);
   if (!tx.success) {
@@ -66,7 +66,7 @@ export function applyOps(doc: Doc, input: unknown): Result {
   return { ok: true, doc: { ...doc, objects } };
 }
 
-// 형제 순서는 (order, id) 사전순이다.
+/** parent의 자식을 (order, id) 사전순으로 돌려준다. parent가 null이면 보드 위 Frame이다. */
 export function childrenOf(objects: Objects, parent: string | null): [string, Obj][] {
   return Object.entries(objects)
     .filter(([, o]) => o.parent === parent)
