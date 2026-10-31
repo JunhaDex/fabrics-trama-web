@@ -58,6 +58,8 @@
 }
 
 .n-hero01 {
+  display: flex;
+  flex-direction: column;
   flex-shrink: 0;
   height: 240px;
   overflow: hidden;
@@ -65,10 +67,23 @@
 }
 
 .n-badge1 {
+  display: flex;
+  flex-direction: column;
+  height: 24px;
   left: 12px;
   position: absolute;
   top: -8px;
-  width: 100%;
+  width: 64.5px;
+}
+
+.n-dot001 {
+  display: flex;
+  flex-direction: column;
+  height: 8px;
+  left: 0px;
+  position: absolute;
+  top: 0px;
+  width: 8px;
 }
 
 .n-foot01 {

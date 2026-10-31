@@ -65,6 +65,8 @@
 }
 
 .n-hero01 {
+  display: flex;
+  flex-direction: column;
   flex-shrink: 0;
   height: 240px;
   overflow: hidden;
@@ -72,10 +74,23 @@
 }
 
 .n-badge1 {
+  display: flex;
+  flex-direction: column;
+  height: 24px;
   left: 12px;
   position: absolute;
   top: -8px;
-  width: 100%;
+  width: 64.5px;
+}
+
+.n-dot001 {
+  display: flex;
+  flex-direction: column;
+  height: 8px;
+  left: 0px;
+  position: absolute;
+  top: 0px;
+  width: 8px;
 }
 
 .n-foot01 {
@@ -94,7 +109,10 @@
     <div class="n-card02" data-id="card02"></div>
   </section>
   <div class="n-hero01" data-id="hero01">
-    <span class="n-badge1" data-id="badge1">NEW</span>
+    <p class="n-lead01" data-id="lead01">흐름 안의 자식</p>
+    <div class="n-badge1" data-id="badge1">
+      <div class="n-dot001" data-id="dot001"></div>
+    </div>
   </div>
   <footer class="n-foot01" data-id="foot01"></footer>
 </body>

@@ -27,7 +27,7 @@ const common = {
 };
 
 const layout = {
-  "layout.mode": z.enum(["flex-row", "flex-column", "grid", "absolute"]),
+  "layout.mode": z.enum(["flex-row", "flex-column", "grid"]),
   "layout.gap": Dimension,
   "layout.rowGap": Dimension,
   "layout.justify": z.enum(["start", "center", "end", "space-between", "space-around", "space-evenly"]),
@@ -48,10 +48,12 @@ const child = {
   "grid.colSpan": intMin1,
   "grid.rowStart": intMin1,
   "grid.rowSpan": intMin1,
-  "abs.x": z.number().finite(),
-  "abs.y": z.number().finite(),
-  "abs.h": z.enum(["left", "right", "left-right", "center", "scale"]),
-  "abs.v": z.enum(["top", "bottom", "top-bottom", "center", "scale"]),
+  // absolute로 바꾸는 순간 편집기가 측정한 rect(부모 좌상단 기준 px)를 저장한다.
+  position: z.enum(["static", "absolute"]),
+  x: num4,
+  y: num4,
+  w: num4.min(0),
+  h: num4.min(0),
 };
 
 const tag = (tags: [string, ...string[]]) => ({ tag: z.enum(tags) });

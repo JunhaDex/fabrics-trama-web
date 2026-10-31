@@ -88,6 +88,9 @@ describe("set", () => {
     expect(code(base, { op: "set", id: "box001", props: { "style.color@bp:bp1": "x" } })).toBe("KEY_NOT_ALLOWED");
     expect(code(base, { op: "set", id: "box001", props: { toString: 1 } })).toBe("KEY_NOT_ALLOWED");
     expect(code(base, { op: "set", id: "box001", props: { "layout.mode": "block" } })).toBe("VALUE_INVALID");
+    expect(code(base, { op: "set", id: "box001", props: { "layout.mode": "absolute" } })).toBe("VALUE_INVALID");
+    expect(code(base, { op: "set", id: "box001", props: { position: "absolute", w: -1 } })).toBe("VALUE_INVALID");
+    expect(code(base, { op: "set", id: "frame1", props: { position: "absolute" } })).toBe("KEY_NOT_ALLOWED");
     expect(
       code(base, { op: "set", id: "box001", props: { "size.width": { value: 1.23456, unit: "px" } } }),
     ).toBe("VALUE_INVALID");

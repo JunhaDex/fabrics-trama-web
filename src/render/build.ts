@@ -32,12 +32,17 @@ const GRID_ALIGN: Record<string, string> = { start: "start", center: "center", e
 
 const num = (n: number) => String(n === 0 ? 0 : n);
 const dim = (d: Dim) => num(d.value) + d.unit;
+const px = (n: unknown) => `${num((n as number) ?? 0)}px`;
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 
 export function build(doc: Doc, frameId: string): Page {
   const rules: Rule[] = [RESET];
   const visit = (id: string, o: Obj, parent: Obj | null): El => {
+    const kids = childrenOf(doc.objects, id);
     const decls = [...(hasLayout(o) ? layoutDecls(o) : []), ...(parent ? childDecls(o, parent) : frameDecls(o))];
+    // absolute 노드는 그 자체로 기준 상자가 되므로 relative를 덧붙이지 않는다.
+    if (o.position !== "absolute" && kids.some(([, c]) => c.position === "absolute"))
+      decls.push(["position", "relative"]);
     for (const [k, v] of Object.entries(o)) if (k.startsWith("style.")) decls.push([k.slice(6), v as string]);
     if (o.hidden) {
       const i = decls.findIndex(([p]) => p === "display");
@@ -53,7 +58,7 @@ export function build(doc: Doc, frameId: string): Page {
       attrs,
       layout: hasLayout(o) ? mode(o) : null,
       text: o.type === "text" ? ((o.content as string) ?? "") : null,
-      children: childrenOf(doc.objects, id).map(([cid, c]) => visit(cid, c, o)),
+      children: kids.map(([cid, c]) => visit(cid, c, o)),
     };
   };
   const frame = doc.objects[frameId];
@@ -68,7 +73,6 @@ function layoutDecls(o: Obj): Decl[] {
   const m = mode(o);
   const d: Decl[] = [];
   if (o["layout.clip"]) d.push(["overflow", "hidden"]);
-  if (m === "absolute") return [...d, ["position", "relative"]];
   const gap = o["layout.gap"] as Dim | undefined;
   const rowGap = (o["layout.rowGap"] as Dim | undefined) ?? gap;
   if (gap) d.push(["column-gap", dim(gap)]);
@@ -87,12 +91,18 @@ function layoutDecls(o: Obj): Decl[] {
 }
 
 function frameDecls(o: Obj): Decl[] {
-  const d: Decl[] = [["min-width", `${num((o.minWidth as number) ?? 320)}px`]];
+  const d: Decl[] = [["min-width", px(o.minWidth ?? 320)]];
   if (o.safeArea) for (const s of ["top", "right", "bottom", "left"]) d.push([`padding-${s}`, `env(safe-area-inset-${s})`]);
   return d;
 }
 
 function childDecls(o: Obj, parent: Obj): Decl[] {
+  if (o.position === "absolute") {
+    const d: Decl[] = [["position", "absolute"], ["left", px(o.x)], ["top", px(o.y)]];
+    if (o.w !== undefined) d.push(["width", px(o.w)]);
+    if (o.h !== undefined) d.push(["height", px(o.h)]);
+    return d;
+  }
   const m = mode(parent);
   const d: Decl[] = [];
   for (const k of ["minWidth", "maxWidth", "minHeight", "maxHeight"]) {
@@ -101,15 +111,6 @@ function childDecls(o: Obj, parent: Obj): Decl[] {
   }
   const w = o["size.width"] as Size | undefined;
   const h = o["size.height"] as Size | undefined;
-
-  if (m === "absolute") {
-    d.push(["position", "absolute"], ["left", `${num((o["abs.x"] as number) ?? 0)}px`], ["top", `${num((o["abs.y"] as number) ?? 0)}px`]);
-    for (const [prop, s] of [["width", w], ["height", h]] as const) {
-      if (s === "fill") d.push([prop, "100%"]);
-      else if (s && s !== "hug") d.push([prop, dim(s)]);
-    }
-    return d;
-  }
 
   if (m === "grid") {
     for (const [axis, start, span] of [["column", "grid.colStart", "grid.colSpan"], ["row", "grid.rowStart", "grid.rowSpan"]]) {

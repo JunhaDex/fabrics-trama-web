@@ -25,9 +25,12 @@ const pricing = doc(
     props: { "grid.colSpan": 2, "size.width": "hug", "size.minHeight": px(120.5) } },
   { op: "create", id: "card02", type: "container", parent: "grid01", position: "last", props: { hidden: true } },
   { op: "create", id: "hero01", type: "container", parent: "frame1", position: "last",
-    props: { "layout.mode": "absolute", "layout.clip": true, "size.height": px(240) } },
-  { op: "create", id: "badge1", type: "text", parent: "hero01", position: "last",
-    props: { tag: "span", content: "NEW", "abs.x": 12, "abs.y": -8, "size.width": "fill" } },
+    props: { "layout.clip": true, "size.height": px(240) } },
+  { op: "create", id: "lead01", type: "text", parent: "hero01", position: "last", props: { content: "흐름 안의 자식" } },
+  { op: "create", id: "badge1", type: "container", parent: "hero01", position: "last",
+    props: { position: "absolute", x: 12, y: -8, w: 64.5, h: 24, "size.width": "fill" } },
+  { op: "create", id: "dot001", type: "container", parent: "badge1", position: "last",
+    props: { position: "absolute", x: 0, y: 0, w: 8, h: 8 } },
   { op: "create", id: "foot01", type: "section", parent: "frame1", position: "last", props: { tag: "footer" } },
 );
 
