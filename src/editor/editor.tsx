@@ -8,6 +8,7 @@ import { exportJson, importJson, previewHtml } from "./io";
 import { isTyping } from "./keys";
 import { Layers } from "./layers";
 import { load, save } from "./persist";
+import { Preview } from "./preview";
 import { Props } from "./props";
 import { apply, select, source, useEditor } from "./store";
 
@@ -27,7 +28,7 @@ export function Editor() {
       timer = setTimeout(() => save(source.getDoc()), 300);
     });
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e)) return;
+      if (isTyping(e) || useEditor.getState().preview !== null) return;
       const mod = e.metaKey || e.ctrlKey;
       const sel = useEditor.getState().selected;
       if (mod && e.key.toLowerCase() === "z") {
@@ -79,6 +80,7 @@ export function Editor() {
       <aside className="min-h-0 overflow-auto border-l border-border bg-surface-raised">
         <Props />
       </aside>
+      <Preview />
     </div>
   );
 }

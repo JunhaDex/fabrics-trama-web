@@ -3,14 +3,11 @@ import { build, toPreview } from "@/render";
 import { frameOf } from "./geometry";
 import { source, useEditor } from "./store";
 
-/** 선택한 노드가 속한 Frame(선택이 없으면 첫 Frame)의 내보내기 결과를 새 탭에서 연다. */
+/** 선택한 노드가 속한 Frame(선택이 없으면 첫 Frame)의 내보내기 HTML을 미리보기 팝업으로 연다. */
 export function previewHtml() {
   const { doc, selected } = useEditor.getState();
   const frame = selected ? frameOf(doc, selected) : childrenOf(doc.objects, null)[0]?.[0];
-  if (!frame) return;
-  const url = URL.createObjectURL(new Blob([toPreview(build(doc, frame))], { type: "text/html" }));
-  window.open(url, "_blank");
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  if (frame) useEditor.setState({ preview: toPreview(build(doc, frame)) });
 }
 
 export function exportJson() {
