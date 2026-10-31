@@ -46,6 +46,11 @@ export function toExport(page: Page): { html: string; css: string } {
   };
 }
 
+/** 내보내기 결과를 한 파일로 보는 미리보기. CSS를 인라인하며 data 속성을 붙이지 않는다. */
+export function toPreview(page: Page): string {
+  return html(page, `<style>\n${css(page)}</style>`, { dataId: false, dataLayout: false });
+}
+
 /** 편집기 iframe의 srcdoc. CSS를 인라인하고 요소마다 data-id를 붙인다. */
 export function toSrcdoc(page: Page): string {
   return html(page, `<style>\n${css(page)}</style>`, { dataId: true, dataLayout: false });

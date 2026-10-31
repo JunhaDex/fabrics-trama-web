@@ -5,6 +5,8 @@
 }
 
 .n-frame1 {
+  background-color: #ffffff;
+  color: #1a1a1a;
   display: flex;
   flex-direction: column;
   min-width: 320px;
@@ -34,6 +36,8 @@
   align-self: stretch;
   flex-basis: 0%;
   flex-grow: 1;
+  font-size: 1.5rem;
+  font-weight: 700;
   min-width: 0;
 }
 
@@ -45,11 +49,18 @@
 }
 
 .n-card01 {
+  background-color: #3366ff;
+  border-color: rgb(0 0 0 / 0.12);
+  border-radius: 8px;
+  border-style: solid;
+  border-width: 1px;
   display: flex;
   flex-direction: column;
   grid-column-end: span 2;
   justify-self: center;
   min-height: 120.5px;
+  padding-left: 16px;
+  padding-top: 16px;
 }
 
 .n-card02 {

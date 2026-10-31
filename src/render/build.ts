@@ -31,6 +31,20 @@ const GRID_ALIGN: Record<string, string> = { start: "start", center: "center", e
 const num = (n: number) => String(n === 0 ? 0 : n);
 const dim = (d: Dim) => num(d.value) + d.unit;
 const px = (n: unknown) => `${num((n as number) ?? 0)}px`;
+
+type Color = { components: [number, number, number]; alpha?: number };
+
+function color({ components, alpha = 1 }: Color) {
+  const [r, g, b] = components.map((c) => Math.round(c * 255));
+  if (alpha === 1) return "#" + [r, g, b].map((c) => c.toString(16).padStart(2, "0")).join("");
+  return `rgb(${r} ${g} ${b} / ${num(alpha)})`;
+}
+
+function value(v: unknown): string {
+  if (typeof v === "number") return num(v);
+  if (typeof v === "string") return v;
+  return "unit" in (v as object) ? dim(v as Dim) : color(v as Color);
+}
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 
 export function build(doc: Doc, frameId: string): Page {
@@ -41,7 +55,7 @@ export function build(doc: Doc, frameId: string): Page {
     // absolute 노드는 그 자체로 기준 상자가 되므로 relative를 덧붙이지 않는다.
     if (o.position !== "absolute" && kids.some(([, c]) => c.position === "absolute"))
       decls.push(["position", "relative"]);
-    for (const [k, v] of Object.entries(o)) if (k.startsWith("style.")) decls.push([k.slice(6), v as string]);
+    for (const [k, v] of Object.entries(o)) if (k.startsWith("style.")) decls.push([k.slice(6), value(v)]);
     if (o.hidden) {
       const i = decls.findIndex(([p]) => p === "display");
       if (i >= 0) decls.splice(i, 1);
