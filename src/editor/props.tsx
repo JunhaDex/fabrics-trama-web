@@ -1,6 +1,7 @@
 "use client";
 
-import { Input, Select, Switch, Textarea } from "@junhadex/core";
+import { Button, Icon, Input, Select, Switch, Textarea } from "@junhadex/core";
+import { X } from "lucide";
 import { useId, type ReactNode } from "react";
 import { z } from "zod";
 import { KEYS, type Doc, type NodeType } from "@/model";
@@ -8,6 +9,13 @@ import { localRect } from "./geometry";
 import { apply, useEditor } from "./store";
 
 type Dim = { value: number; unit: string };
+type Color = { colorSpace: "srgb"; components: [number, number, number]; alpha?: number };
+
+const hex = (c: Color) => "#" + c.components.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
+const toColor = (h: string): Color => ({
+  colorSpace: "srgb",
+  components: [1, 3, 5].map((i) => Math.round((parseInt(h.slice(i, i + 2), 16) / 255) * 1e4) / 1e4) as Color["components"],
+});
 
 const set = (id: string, props: Record<string, unknown>) => apply({ op: "set", id, props });
 const round = (n: number) => Math.round(n * 100) / 100;
@@ -42,6 +50,28 @@ export function Props() {
             <Text id={id} k="src" value={v("src")} label="src" />
             <Text id={id} k="alt" value={v("alt")} label="alt" />
             <Choice id={id} k="style.object-fit" value={v("style.object-fit")} opts={options(t, "style.object-fit")} def="fill" label="맞춤" />
+          </>
+        )}
+      </Group>
+
+      <Group title="스타일">
+        {has("style.background-color") && <ColorField id={id} k="style.background-color" value={v("style.background-color")} label="배경" />}
+        {has("style.color") && (
+          <>
+            <ColorField id={id} k="style.color" value={v("style.color")} label="글자색" />
+            <Num id={id} k="style.font-size" value={v("style.font-size")} label="글자 크기" dim />
+            <Choice id={id} k="style.font-weight" value={v("style.font-weight")?.toString()} opts={WEIGHTS} def="400" label="굵기" num />
+          </>
+        )}
+        {has("style.padding-top") && (
+          <>
+            {(["top", "right", "bottom", "left"] as const).map((s) => (
+              <Num key={s} id={id} k={`style.padding-${s}`} value={v(`style.padding-${s}`)} label={`padding ${s}`} dim />
+            ))}
+            <Num id={id} k="style.border-width" value={v("style.border-width")} label="테두리 두께" dim />
+            <Choice id={id} k="style.border-style" value={v("style.border-style")} opts={options(t, "style.border-style")} def="none" label="테두리 모양" />
+            <ColorField id={id} k="style.border-color" value={v("style.border-color")} label="테두리 색" />
+            <Num id={id} k="style.border-radius" value={v("style.border-radius")} label="모서리" dim />
           </>
         )}
       </Group>
@@ -177,7 +207,41 @@ function Num({ id, k, value, label, dim }: FieldProps & { dim?: boolean }) {
   );
 }
 
-function Choice({ id, k, value, label, opts, def }: FieldProps & { opts: string[]; def: string }) {
+const WEIGHTS = ["100", "200", "300", "400", "500", "600", "700", "800", "900"];
+
+function ColorField({ id, k, value, label }: FieldProps) {
+  const c = value as Color | undefined;
+  return (
+    <Row label={label}>
+      {(rid) => (
+        <div className="flex items-center gap-2">
+          <input
+            key={c ? hex(c) : "none"}
+            id={rid}
+            type="color"
+            defaultValue={c ? hex(c) : "#000000"}
+            ref={(el) => {
+              if (!el) return;
+              // React의 onChange는 드래그 중에도 계속 발생하므로, 선택을 마칠 때 한 번 오는 네이티브 change를 쓴다.
+              const commit = () => (!c || el.value !== hex(c)) && set(id, { [k]: toColor(el.value) });
+              el.addEventListener("change", commit);
+              return () => el.removeEventListener("change", commit);
+            }}
+            className="h-8 w-12 cursor-pointer rounded border border-border bg-transparent"
+          />
+          <span className="flex-1 text-xs text-on-surface-muted">{c ? hex(c) : "없음"}</span>
+          {c && (
+            <Button size="sm" variant="ghost" aria-label={`${label} 지우기`} onClick={() => set(id, { [k]: null })}>
+              <Icon node={X} />
+            </Button>
+          )}
+        </div>
+      )}
+    </Row>
+  );
+}
+
+function Choice({ id, k, value, label, opts, def, num }: FieldProps & { opts: string[]; def: string; num?: boolean }) {
   return (
     <Row label={label}>
       {(rid) => (
@@ -186,7 +250,7 @@ function Choice({ id, k, value, label, opts, def }: FieldProps & { opts: string[
           size="sm"
           options={opts.map((o) => ({ value: o, label: o }))}
           value={(value as string) ?? def}
-          onValueChange={(o) => set(id, { [k]: o === def ? null : o })}
+          onValueChange={(o) => set(id, { [k]: o === def ? null : num ? Number(o) : o })}
         />
       )}
     </Row>

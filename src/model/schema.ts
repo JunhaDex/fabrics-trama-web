@@ -14,6 +14,14 @@ export const Dimension = z.strictObject({
   unit: z.enum(["px", "rem"]),
 });
 
+const unit = num4.min(0).max(1);
+
+export const Color = z.strictObject({
+  colorSpace: z.literal("srgb"),
+  components: z.tuple([unit, unit, unit]),
+  alpha: unit.optional(),
+});
+
 const intMin1 = z.number().int().min(1);
 const size = z.union([z.enum(["fill", "hug"]), Dimension]);
 
@@ -54,6 +62,24 @@ const child = {
   h: num4.min(0),
 };
 
+const text = {
+  "style.color": Color,
+  "style.font-size": Dimension,
+  "style.font-weight": z.number().int().min(100).max(900).multipleOf(100),
+};
+
+const box = {
+  "style.background-color": Color,
+  "style.padding-top": Dimension,
+  "style.padding-right": Dimension,
+  "style.padding-bottom": Dimension,
+  "style.padding-left": Dimension,
+  "style.border-width": Dimension,
+  "style.border-style": z.enum(["none", "solid", "dashed", "dotted"]),
+  "style.border-color": Color,
+  "style.border-radius": Dimension,
+};
+
 const tag = (tags: [string, ...string[]]) => ({ tag: z.enum(tags) });
 
 export const KEYS: Record<NodeType, Record<string, z.ZodType>> = {
@@ -67,22 +93,30 @@ export const KEYS: Record<NodeType, Record<string, z.ZodType>> = {
     baseLabel: z.string(),
     minWidth: z.number().finite().positive(),
     safeArea: z.boolean(),
+    ...text,
+    "style.background-color": Color,
   },
   section: {
     ...common,
     ...layout,
     ...child,
+    ...text,
+    ...box,
     ...tag(["section", "header", "footer", "nav", "main", "aside", "article"]),
   },
   container: {
     ...common,
     ...layout,
     ...child,
+    ...text,
+    ...box,
     ...tag(["div", "ul", "ol", "li", "figure", "a", "button", "form", "label"]),
   },
   text: {
     ...common,
     ...child,
+    ...text,
+    ...box,
     ...tag(["p", "h1", "h2", "h3", "h4", "h5", "h6", "span", "strong", "em", "small", "label", "a", "button", "li"]),
     content: z.string(),
   },
@@ -91,6 +125,7 @@ export const KEYS: Record<NodeType, Record<string, z.ZodType>> = {
     ...child,
     src: z.string(),
     alt: z.string(),
+    ...box,
     "style.object-fit": z.enum(["cover", "contain", "fill"]),
   },
 };

@@ -9,19 +9,26 @@ function doc(...ops: Op[]): Doc {
 }
 
 const px = (value: number) => ({ value, unit: "px" });
+const rgb = (r: number, g: number, b: number, alpha?: number) => ({
+  colorSpace: "srgb",
+  components: [r, g, b],
+  ...(alpha !== undefined && { alpha }),
+});
 
 const pricing = doc(
-  { op: "create", id: "frame1", type: "frame", parent: null, placement: "last", props: { name: "Pricing & Plans", safeArea: true } },
+  { op: "create", id: "frame1", type: "frame", parent: null, placement: "last", props: { name: "Pricing & Plans", safeArea: true, "style.background-color": rgb(1, 1, 1), "style.color": rgb(0.1, 0.1, 0.1) } },
   { op: "create", id: "head01", type: "section", parent: "frame1", placement: "last",
     props: { tag: "header", "layout.mode": "flex-row", "layout.justify": "space-between", "layout.align": "center", "layout.gap": px(16) } },
   { op: "create", id: "logo01", type: "image", parent: "head01", placement: "last",
     props: { src: "logo.svg", alt: "trama", "size.width": px(96), "style.object-fit": "contain" } },
   { op: "create", id: "title1", type: "text", parent: "head01", placement: "last",
-    props: { tag: "h1", content: "요금제 <비교>", "size.width": "fill" } },
+    props: { tag: "h1", content: "요금제 <비교>", "size.width": "fill", "style.font-size": { value: 1.5, unit: "rem" }, "style.font-weight": 700 } },
   { op: "create", id: "grid01", type: "section", parent: "frame1", placement: "last",
     props: { "layout.mode": "grid", "layout.columns": 3, "layout.gap": px(24), "layout.rowGap": px(32), "layout.justify": "center" } },
   { op: "create", id: "card01", type: "container", parent: "grid01", placement: "last",
-    props: { "grid.colSpan": 2, "size.width": "hug", "size.minHeight": px(120.5) } },
+    props: { "grid.colSpan": 2, "size.width": "hug", "size.minHeight": px(120.5),
+      "style.padding-top": px(16), "style.padding-left": px(16), "style.border-width": px(1), "style.border-style": "solid",
+      "style.border-color": rgb(0, 0, 0, 0.12), "style.border-radius": px(8), "style.background-color": rgb(0.2, 0.4, 1) } },
   { op: "create", id: "card02", type: "container", parent: "grid01", placement: "last", props: { hidden: true } },
   { op: "create", id: "hero01", type: "container", parent: "frame1", placement: "last",
     props: { "layout.clip": true, "size.height": px(240) } },
