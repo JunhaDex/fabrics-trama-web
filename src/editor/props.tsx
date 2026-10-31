@@ -4,19 +4,14 @@ import { Button, Icon, Input, Select, Switch, Textarea } from "@junhadex/core";
 import { RotateCcw, Trash2, X } from "lucide";
 import { useId, type ReactNode } from "react";
 import { z } from "zod";
-import { breakpointsOf, frameOf, KEYS, type Doc, type NodeType } from "@/model";
+import { BIND_TYPE, breakpointsOf, frameOf, KEYS, tokensOf, type Doc, type NodeType } from "@/model";
 import { activeBp, effective, overridden, write } from "./bp";
+import { hex, toColor, type Color } from "./color";
 import { localRect } from "./geometry";
 import { apply, newId, useEditor } from "./store";
 
 type Dim = { value: number; unit: string };
-type Color = { colorSpace: "srgb"; components: [number, number, number]; alpha?: number };
-
-const hex = (c: Color) => "#" + c.components.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
-const toColor = (h: string): Color => ({
-  colorSpace: "srgb",
-  components: [1, 3, 5].map((i) => Math.round((parseInt(h.slice(i, i + 2), 16) / 255) * 1e4) / 1e4) as Color["components"],
-});
+const isBinding = (v: unknown): v is { token: string } => typeof v === "object" && v !== null && "token" in v;
 
 const set = (id: string, props: Record<string, unknown>) => apply({ op: "set", id, props });
 const round = (n: number) => Math.round(n * 100) / 100;
@@ -68,6 +63,7 @@ export function Props() {
         {has("style.color") && (
           <>
             <ColorField {...f("style.color")} label="글자색" />
+            <FontField {...f("style.font-family")} label="글꼴" />
             <Num {...f("style.font-size")} label="글자 크기" dim />
             <Choice {...f("style.font-weight")} opts={WEIGHTS} def="400" label="굵기" num />
           </>
@@ -157,7 +153,9 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function Row({ label, reset, children }: { label: string; reset?: () => void; children: (id: string) => ReactNode }) {
+type RowProps = { label: string; reset?: () => void; bind?: { id: string; k: string }; children: (id: string) => ReactNode };
+
+function Row({ label, reset, bind, children }: RowProps) {
   const rid = useId();
   return (
     <div className="grid grid-cols-[88px_1fr] items-center gap-2">
@@ -171,8 +169,65 @@ function Row({ label, reset, children }: { label: string; reset?: () => void; ch
           </button>
         )}
       </div>
-      {children(rid)}
+      <div className="flex min-w-0 items-center gap-1">
+        <div className="min-w-0 flex-1">{children(rid)}</div>
+        {bind && BIND_TYPE[bind.k] && <TokenSelect {...bind} label={label} />}
+      </div>
     </div>
+  );
+}
+
+function TokenSelect({ id, k, label }: { id: string; k: string; label: string }) {
+  const doc = useEditor((s) => s.doc);
+  const opts = tokensOf(doc.objects).filter(([, t]) => t.tokenType === BIND_TYPE[k]);
+  if (!opts.length) return null;
+  return (
+    <select
+      aria-label={`${label} 토큰`}
+      value=""
+      onChange={(e) => e.target.value && write(id, k, { token: e.target.value })}
+      className="h-8 w-16 rounded border border-border bg-surface px-1 text-xs"
+    >
+      <option value="">토큰</option>
+      {opts.map(([tid, t]) => (
+        <option key={tid} value={tid}>
+          {t.name as string}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** 토큰이 바인딩된 필드. 토큰 이름과 바인딩 해제 버튼을 보여준다. */
+function Bound({ id, k, value, label, reset }: FieldProps) {
+  const doc = useEditor((s) => s.doc);
+  const name = (doc.objects[(value as { token: string }).token]?.name as string) ?? "?";
+  return (
+    <Row label={label} reset={reset}>
+      {(rid) => (
+        <div className="flex items-center gap-1">
+          <span id={rid} className="truncate rounded bg-brand-subtle px-2 py-1 text-xs text-on-brand-subtle">
+            {name}
+          </span>
+          <Button size="sm" variant="ghost" aria-label={`${label} 토큰 해제`} onClick={() => write(id, k, null)}>
+            <Icon node={X} />
+          </Button>
+        </div>
+      )}
+    </Row>
+  );
+}
+
+function FontField(p: FieldProps) {
+  if (isBinding(p.value)) return <Bound {...p} />;
+  return (
+    <Row label={p.label} reset={p.reset} bind={{ id: p.id, k: p.k }}>
+      {(rid) => (
+        <span id={rid} className="text-xs text-on-surface-muted">
+          기본값
+        </span>
+      )}
+    </Row>
   );
 }
 
@@ -201,6 +256,7 @@ function Text({ id, k, value, label, reset, multiline }: FieldProps & { multilin
 }
 
 function Num({ id, k, value, label, reset, dim }: FieldProps & { dim?: boolean }) {
+  if (isBinding(value)) return <Bound id={id} k={k} value={value} label={label} reset={reset} />;
   const n = dim ? (value as Dim | undefined)?.value : (value as number | undefined);
   const commit = (s: string) => {
     if (s === String(n ?? "")) return;
@@ -208,7 +264,7 @@ function Num({ id, k, value, label, reset, dim }: FieldProps & { dim?: boolean }
     write(id, k, x === null ? null : dim ? { value: x, unit: "px" } : x);
   };
   return (
-    <Row label={label} reset={reset}>
+    <Row label={label} reset={reset} bind={{ id, k }}>
       {(rid) => (
         <Input
           key={String(n)}
@@ -227,9 +283,10 @@ function Num({ id, k, value, label, reset, dim }: FieldProps & { dim?: boolean }
 const WEIGHTS = ["100", "200", "300", "400", "500", "600", "700", "800", "900"];
 
 function ColorField({ id, k, value, label, reset }: FieldProps) {
+  if (isBinding(value)) return <Bound id={id} k={k} value={value} label={label} reset={reset} />;
   const c = value as Color | undefined;
   return (
-    <Row label={label} reset={reset}>
+    <Row label={label} reset={reset} bind={{ id, k }}>
       {(rid) => (
         <div className="flex items-center gap-2">
           <input
@@ -259,8 +316,9 @@ function ColorField({ id, k, value, label, reset }: FieldProps) {
 }
 
 function Choice({ id, k, value, label, reset, opts, def, num }: FieldProps & { opts: string[]; def: string; num?: boolean }) {
+  if (isBinding(value)) return <Bound id={id} k={k} value={value} label={label} reset={reset} />;
   return (
-    <Row label={label} reset={reset}>
+    <Row label={label} reset={reset} bind={{ id, k }}>
       {(rid) => (
         <Select
           id={rid}
@@ -283,10 +341,11 @@ function Toggle({ id, k, value, label, reset }: FieldProps) {
 }
 
 function Size({ id, k, value, label, reset, def }: FieldProps & { def: "fill" | "hug" }) {
+  if (isBinding(value)) return <Bound id={id} k={k} value={value} label={label} reset={reset} />;
   const kind = typeof value === "object" && value ? "fixed" : ((value as string) ?? def);
   return (
     <>
-      <Row label={label} reset={reset}>
+      <Row label={label} reset={reset} bind={{ id, k }}>
         {(rid) => (
           <Select
             id={rid}

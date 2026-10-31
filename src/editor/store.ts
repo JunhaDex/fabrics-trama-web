@@ -4,7 +4,7 @@ import type { Doc, Op, OpError, Result } from "@/model";
 import { LocalSource } from "./source";
 
 export type View = { x: number; y: number; zoom: number };
-export type Code = { label: string; lang: "html" | "css"; code: string };
+export type Code = { label: string; lang: "html" | "css" | "json"; code: string };
 export type Preview = { title: string; parts: Code[] };
 
 type State = {
@@ -15,6 +15,9 @@ type State = {
   preview: Preview | null;
   clipped: Record<string, string[]>;
   heights: Record<string, number>;
+  /** modifier 이름 → 미리보기 컨텍스트. 문서가 아니라 미리보기 상태다. */
+  ctx: Record<string, string>;
+  tokensOpen: boolean;
 };
 
 // 서버 렌더와 첫 클라이언트 렌더가 같아야 하므로 초기 Frame ID는 고정값이다.
@@ -46,6 +49,8 @@ export const useEditor = create<State>(() => ({
   preview: null,
   clipped: {},
   heights: {},
+  ctx: {},
+  tokensOpen: false,
 }));
 
 source.subscribe(() => {

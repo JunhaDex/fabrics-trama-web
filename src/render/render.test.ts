@@ -143,3 +143,25 @@ describe("snippet", () => {
     expect(toSnippet(resp, "nobody")).toBeNull();
   });
 });
+
+describe("토큰 golden", () => {
+  const tok = (id: string, props: object) => ({ op: "create", id, type: "token", parent: null, props }) as Op;
+  const tokens = doc(
+    { op: "create", id: "palette", type: "modifier", parent: null, props: { name: "palette", contexts: ["brand", "mono"], default: "brand" } },
+    tok("tkBlue1", { name: "color.blue", tokenType: "color", value: rgb(0.2, 0.4, 1), variesBy: "palette", "value@ctx:mono": rgb(0.5, 0.5, 0.5) }),
+    tok("tkPrim1", { name: "color.primary", tokenType: "color", value: { ref: "tkBlue1" }, variesBy: "_mode", "value@ctx:dark": rgb(1, 1, 1) }),
+    tok("tkSurf1", { name: "color.surface", tokenType: "color", value: rgb(1, 1, 1), variesBy: "_mode", "value@ctx:dark": rgb(0.1, 0.1, 0.1) }),
+    tok("tkSpace", { name: "space.md", tokenType: "dimension", value: px(16) }),
+    tok("tkFont1", { name: "font.body", tokenType: "fontFamily", value: ["Noto Sans KR", "sans-serif"] }),
+    tok("tkUnusd", { name: "unused", tokenType: "number", value: 1 }),
+    { op: "create", id: "frame1", type: "frame", parent: null, placement: "last",
+      props: { "style.background-color": { token: "tkSurf1" }, "style.font-family": { token: "tkFont1" } } },
+    { op: "create", id: "bp0768", type: "breakpoint", parent: "frame1", props: { minWidth: 768 } },
+    { op: "create", id: "card01", type: "container", parent: "frame1", placement: "last",
+      props: { "style.background-color": { token: "tkPrim1" }, "style.padding-top": { token: "tkSpace" }, "layout.gap@bp:bp0768": { token: "tkSpace" } } },
+  );
+
+  it("export css", async () => {
+    await expect(toExport(build(tokens, "frame1")).css).toMatchFileSnapshot("__golden__/tokens.export.css");
+  });
+});

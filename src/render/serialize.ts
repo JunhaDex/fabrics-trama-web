@@ -22,7 +22,7 @@ const rule = (r: Rule, pad: string) => `${pad}${r.sel} {\n${r.decls.map(([p, v])
 const sheet = (rules: Rule[], media: Media[]) =>
   [
     ...rules.map((r) => rule(r, "")),
-    ...media.map((m) => `@media (min-width: ${m.min}px) {\n${m.rules.map((r) => rule(r, "  ")).join("\n")}}\n`),
+    ...media.map((m) => `@media ${m.query} {\n${m.rules.map((r) => rule(r, "  ")).join("\n")}}\n`),
   ].join("\n");
 
 export const css = (page: Page) => sheet(page.rules, page.media);
@@ -78,7 +78,7 @@ export function toSnippet(page: Page, id: string): { html: string; css: string }
     e.children.forEach(walk);
   };
   walk(root);
-  const keep = (r: Rule) => sels.has(r.sel);
+  const keep = (r: Rule) => sels.has(r.sel) || r.sel.startsWith(":root");
   return {
     html: el(root, { dataId: false, dataLayout: false }, 0) + "\n",
     css: sheet(

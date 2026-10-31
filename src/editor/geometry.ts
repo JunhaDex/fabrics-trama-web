@@ -73,13 +73,13 @@ export function scan(el: HTMLIFrameElement, checkOver: boolean): Scan | null {
  * srcdoc을 SVG foreignObject 이미지로 바꾼 data URL. 화면 밖 Frame의 정적 스냅샷에 쓴다.
  * SVG 이미지는 외부 리소스를 불러오지 않으므로 외부 이미지는 스냅샷에 나타나지 않는다.
  */
-export function snapshot(html: string, w: number, h: number): string {
+export function snapshot(html: string, w: number, h: number, attrs: Record<string, string>): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
   const xml = new XMLSerializer();
   const style = [...doc.querySelectorAll("style")].map((s) => xml.serializeToString(s)).join("");
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%">` +
-    `<html xmlns="http://www.w3.org/1999/xhtml"><head>${style}</head>${xml.serializeToString(doc.body)}</html></foreignObject></svg>`;
+    `<html xmlns="http://www.w3.org/1999/xhtml"${Object.entries(attrs).map(([k, v]) => ` ${k}="${v}"`).join("")}><head>${style}</head>${xml.serializeToString(doc.body)}</html></foreignObject></svg>`;
   return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 }
 

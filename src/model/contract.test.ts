@@ -106,6 +106,36 @@ const GROUPS: Record<string, Case[]> = {
       { op: "delete", id: "bp0768" },
     ] },
   ],
+  token: [
+    { name: "modifier·토큰 생성과 바인딩", doc: base, ops: [
+      { op: "create", id: "palette", type: "modifier", parent: null, props: { name: "palette", contexts: ["brand", "mono"], default: "brand" } },
+      { op: "create", id: "tkBlue1", type: "token", parent: null, props: { name: "color.blue", tokenType: "color", value: { colorSpace: "srgb", components: [0.2, 0.4, 1] }, variesBy: "palette", "value@ctx:mono": { colorSpace: "srgb", components: [0.5, 0.5, 0.5] } } },
+      { op: "create", id: "tkPrim1", type: "token", parent: null, props: { name: "color.primary", tokenType: "color", value: { ref: "tkBlue1" }, variesBy: "_mode", "value@ctx:dark": { colorSpace: "srgb", components: [1, 1, 1] } } },
+      { op: "set", id: "box001", props: { "style.background-color": { token: "tkPrim1" }, "style.color": { token: "tkBlue1" } } },
+    ] },
+    { name: "타입이 다른 참조", doc: base, ops: [
+      { op: "create", id: "tkSpace", type: "token", parent: null, props: { name: "space.md", tokenType: "dimension", value: { value: 16, unit: "px" } } },
+      { op: "create", id: "tkBlue1", type: "token", parent: null, props: { name: "color.blue", tokenType: "color", value: { ref: "tkSpace" } } },
+    ] },
+    { name: "순환 참조", doc: base, ops: [
+      { op: "create", id: "tkA0001", type: "token", parent: null, props: { name: "a", tokenType: "number", value: 1 } },
+      { op: "create", id: "tkB0001", type: "token", parent: null, props: { name: "b", tokenType: "number", value: { ref: "tkA0001" } } },
+      { op: "set", id: "tkA0001", props: { value: { ref: "tkB0001" } } },
+    ] },
+    { name: "쓰이는 토큰 삭제", doc: base, ops: [
+      { op: "create", id: "tkSpace", type: "token", parent: null, props: { name: "space.md", tokenType: "dimension", value: { value: 16, unit: "px" } } },
+      { op: "set", id: "box001", props: { "layout.gap": { token: "tkSpace" } } },
+      { op: "delete", id: "tkSpace" },
+    ] },
+    { name: "이름 중복", doc: base, ops: [
+      { op: "create", id: "tkA0001", type: "token", parent: null, props: { name: "a", tokenType: "number", value: 1 } },
+      { op: "create", id: "tkA0002", type: "token", parent: null, props: { name: "a", tokenType: "number", value: 2 } },
+    ] },
+    { name: "기본 제공 modifier 변경", doc: base, ops: [{ op: "set", id: "_mode", props: { default: "dark" } }] },
+    { name: "일반 계열이 없는 fontFamily", doc: base, ops: [
+      { op: "create", id: "tkFont1", type: "token", parent: null, props: { name: "font.body", tokenType: "fontFamily", value: ["Pretendard"] } },
+    ] },
+  ],
   delete: [{ name: "하위 노드를 함께 삭제", doc: base, ops: [{ op: "delete", id: "box001" }] }],
   transaction: [
     { name: "뒤 연산이 실패하면 전부 거부", doc: base, ops: [{ op: "delete", id: "box002" }, { op: "set", id: "box001", props: { "layout.mode": "block" } }] },
@@ -120,7 +150,7 @@ describe("적합성 fixture", () => {
       const out = cases.map(({ name, doc, ops }) => {
         const tx = { txId: "tx1", actor: "user:test", ops };
         const r = applyOps(doc, tx);
-        if (r.ok) return { name, doc, tx, expect: { ok: true, doc: r.doc } };
+        if (r.ok) return { name, doc, tx, expect: { ok: true, doc: r.doc, warnings: r.warnings } };
         const { code, opIndex, id, key } = r.error;
         return { name, doc, tx, expect: { ok: false, error: { code, opIndex, id, key } } };
       });

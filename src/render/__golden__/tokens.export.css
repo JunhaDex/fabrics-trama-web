@@ -1,0 +1,51 @@
+*, ::before, ::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --color-blue: #3366ff;
+  --color-primary: var(--color-blue);
+  --color-surface: #ffffff;
+  --font-body: "Noto Sans KR", sans-serif;
+  --space-md: 16px;
+}
+
+:root[data-mode="dark"] {
+  --color-primary: #ffffff;
+  --color-surface: #1a1a1a;
+}
+
+:root[data-palette="mono"] {
+  --color-blue: #808080;
+}
+
+.n-frame1 {
+  background-color: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-body);
+  min-width: 320px;
+}
+
+.n-card01 {
+  background-color: var(--color-primary);
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--space-md);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-mode]) {
+    --color-primary: #ffffff;
+    --color-surface: #1a1a1a;
+  }
+}
+
+@media (min-width: 768px) {
+  .n-card01 {
+    column-gap: var(--space-md);
+    row-gap: var(--space-md);
+  }
+}

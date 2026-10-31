@@ -1,4 +1,4 @@
-import { breakpointsOf, childrenOf, type Doc, type Obj } from "../model";
+import { breakpointsOf, childrenOf, modifiersOf, tokenValueAt, type Doc, type Obj, type Objects } from "../model";
 
 export type Decl = [prop: string, value: string];
 export type Rule = { sel: string; decls: Decl[] };
@@ -10,7 +10,7 @@ export type El = {
   text: string | null;
   children: El[];
 };
-export type Media = { min: number; rules: Rule[] };
+export type Media = { query: string; rules: Rule[] };
 export type Page = { title: string; safeArea: boolean; body: El; rules: Rule[]; media: Media[] };
 
 type Dim = { value: number; unit: string };
@@ -29,8 +29,12 @@ const DEFAULT_TAG: Record<string, string> = { section: "section", container: "di
 const FLEX_ALIGN: Record<string, string> = { start: "flex-start", end: "flex-end" };
 const GRID_ALIGN: Record<string, string> = { start: "start", center: "center", end: "end", stretch: "start", baseline: "baseline" };
 
+// 토큰 바인딩은 상태 계산 단계에서 { css: "var(--…)" }로 바뀐다. 아래 형식 함수는 이 값을 그대로 낸다.
+type Css = { css: string };
+const isCss = (v: unknown): v is Css => typeof v === "object" && v !== null && "css" in v;
+
 const num = (n: number) => String(n === 0 ? 0 : n);
-const dim = (d: Dim) => num(d.value) + d.unit;
+const dim = (d: Dim | Css) => (isCss(d) ? d.css : num(d.value) + d.unit);
 const px = (n: unknown) => `${num((n as number) ?? 0)}px`;
 
 type Color = { components: [number, number, number]; alpha?: number };
@@ -41,10 +45,55 @@ function color({ components, alpha = 1 }: Color) {
   return `rgb(${r} ${g} ${b} / ${num(alpha)})`;
 }
 
+const GENERIC = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded", "math", "emoji", "fangsong"]);
+
 function value(v: unknown): string {
   if (typeof v === "number") return num(v);
   if (typeof v === "string") return v;
+  if (isCss(v)) return v.css;
   return "unit" in (v as object) ? dim(v as Dim) : color(v as Color);
+}
+
+const cssVar = (name: string) => `--${name.replace(/\./g, "-")}`;
+
+function tokenCss(objects: Objects, v: unknown): string {
+  if (typeof v === "object" && v !== null && "ref" in v) return `var(${cssVar(objects[(v as { ref: string }).ref].name as string)})`;
+  const families = Array.isArray(v) ? v : null;
+  if (families || (typeof v === "string" && Number.isNaN(Number(v))))
+    return (families ?? [v as string]).map((f) => (GENERIC.has(f) ? f : `"${f.replace(/"/g, '\\"')}"`)).join(", ");
+  return value(v);
+}
+
+/** Frame에서 쓰는 토큰과 그 토큰이 참조하는 토큰의 CSS 사용자 정의 속성 규칙. */
+function tokenRules(objects: Objects, ids: string[]): { rules: Rule[]; media: Media[] } {
+  const used = new Set<string>();
+  const add = (id: string) => {
+    if (used.has(id)) return;
+    used.add(id);
+    for (const [k, v] of Object.entries(objects[id])) if ((k === "value" || k.startsWith("value@ctx:")) && v && typeof v === "object" && "ref" in v) add((v as { ref: string }).ref);
+  };
+  for (const id of ids)
+    for (const v of Object.values(objects[id])) if (v && typeof v === "object" && "token" in v) add((v as { token: string }).token);
+  if (!used.size) return { rules: [], media: [] };
+  const tokens = [...used].sort((a, b) => ((objects[a].name as string) < (objects[b].name as string) ? -1 : 1));
+  const mods = modifiersOf(objects);
+  const defaults = Object.fromEntries(mods.map(([mid, m]) => [mid, m.default as string]));
+  const decl = (id: string, combo: Record<string, string>): Decl => [cssVar(objects[id].name as string), tokenCss(objects, tokenValueAt(objects[id], combo))];
+  const root = new Map(tokens.map((id) => decl(id, defaults)));
+  const rules: Rule[] = [{ sel: ":root", decls: [...root] }];
+  const media: Media[] = [];
+  for (const [mid, m] of mods)
+    for (const ctx of m.contexts as string[]) {
+      if (ctx === m.default) continue;
+      const decls = tokens
+        .filter((id) => objects[id].variesBy === mid)
+        .map((id) => decl(id, { ...defaults, [mid]: ctx }))
+        .filter(([p, v]) => root.get(p) !== v);
+      if (!decls.length) continue;
+      rules.push({ sel: `:root[data-${m.name}="${ctx}"]`, decls });
+      if (mid === "_mode" && ctx === "dark") media.push({ query: "(prefers-color-scheme: dark)", rules: [{ sel: ":root:not([data-mode])", decls }] });
+    }
+  return { rules, media };
 }
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 
@@ -62,6 +111,9 @@ export function build(doc: Doc, frameId: string): Page {
       o = Object.fromEntries(Object.entries(src).filter(([k]) => !k.includes("@"))) as Obj;
       for (let i = 0; i <= state; i++)
         for (const [k, v] of Object.entries(src)) if (k.endsWith(`@bp:${bps[i].id}`)) o[k.slice(0, k.indexOf("@"))] = v;
+      for (const [k, v] of Object.entries(o))
+        if (v && typeof v === "object" && "token" in v)
+          o[k] = { css: `var(${cssVar(doc.objects[(v as { token: string }).token].name as string)})` } satisfies Css;
       cache.set(key, o);
     }
     return o;
@@ -106,6 +158,8 @@ export function build(doc: Doc, frameId: string): Page {
   const rules: Rule[] = [RESET];
   if (Object.values(doc.objects).some((o) => Object.keys(o).some((k) => k.startsWith("src@bp:"))))
     rules.push({ sel: "picture", decls: [["display", "contents"]] });
+  const tokens = tokenRules(doc.objects, order);
+  rules.push(...tokens.rules);
   for (const id of order) {
     const d = declsAt(id, -1);
     if (d.size) rules.push({ sel: `.n-${id}`, decls: sorted(d) });
@@ -119,8 +173,9 @@ export function build(doc: Doc, frameId: string): Page {
       for (const p of prev.keys()) if (!next.has(p)) d.set(p, "revert");
       if (d.size) changed.push({ sel: `.n-${id}`, decls: sorted(d) });
     }
-    return changed.length ? [{ min, rules: changed }] : [];
+    return changed.length ? [{ query: `(min-width: ${min}px)`, rules: changed }] : [];
   });
+  media.unshift(...tokens.media);
   return { title: (frame.name as string) ?? "", safeArea: frame.safeArea === true, body, rules, media };
 }
 
