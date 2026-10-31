@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-31
+
+### Added
+
+- Breakpoint 객체와 @bp override 키 검증
+- BP별 @media 출력과 picture 변환
+- 편집기 BP 탭과 BP override 편집
+- 오버플로 표시 (fold, minWidth 점선, 넘침 아웃라인, clip 배지)
+- 화면 밖·축소 Frame을 정적 스냅샷으로 가상화
+- BP 탭으로 Frame 폭이 바뀌면 오른쪽 Frame을 함께 이동
+- 노드 선택 시 HTML 미리보기를 선택 영역 코드 조각으로 표시
+
 ## [0.3.0] - 2026-10-31
 
 ### Added
@@ -36,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 편집기 골격과 common-design 셸 구성
 
+[0.4.0]: https://github.com/JunhaDex/fabrics-trama-web/compare/v0.3.0..v0.4.0
 [0.3.0]: https://github.com/JunhaDex/fabrics-trama-web/compare/v0.2.0..v0.3.0
 [0.2.0]: https://github.com/JunhaDex/fabrics-trama-web/compare/v0.1.0..v0.2.0
 [0.1.0]: https://github.com/JunhaDex/fabrics-trama-web/tree/v0.1.0
