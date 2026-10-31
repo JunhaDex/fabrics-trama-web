@@ -24,7 +24,9 @@ export type OpError = {
   message: string;
 };
 
-export type Result = { ok: true; doc: Doc } | { ok: false; error: OpError };
+export type Change = { id: string; key: string; before: unknown; after: unknown };
+
+export type Result = { ok: true; doc: Doc; changes: Change[] } | { ok: false; error: OpError };
 
 class Reject extends Error {
   constructor(
@@ -63,7 +65,40 @@ export function applyOps(doc: Doc, input: unknown): Result {
       return { ok: false, error: { code: e.code, opIndex: i, id: e.id, key: e.key, message: e.message } };
     }
   }
-  return { ok: true, doc: { ...doc, objects } };
+  return { ok: true, doc: { ...doc, objects }, changes: diff(doc.objects, objects) };
+}
+
+/**
+ * changes를 적용 전 값으로 되돌린 새 문서와, 다시 적용할 때 쓸 변경 목록을 돌려준다.
+ * 현재 값이 changes의 적용 후 값과 다른 키(이후 다른 참여자가 바꾼 키)는 건너뛴다.
+ */
+export function revert(doc: Doc, changes: Change[]): { doc: Doc; changes: Change[] } {
+  const objects = { ...doc.objects };
+  for (const c of changes) {
+    const cur = objects[c.id];
+    if (!same(cur?.[c.key], c.after)) continue;
+    const next = { ...cur } as Obj;
+    if (c.before === undefined) delete next[c.key];
+    else next[c.key] = c.before;
+    if (Object.keys(next).length) objects[c.id] = next;
+    else delete objects[c.id];
+  }
+  return { doc: { ...doc, objects }, changes: diff(doc.objects, objects) };
+}
+
+// 값은 JSON이며 같은 코드 경로에서 만들어져 키 순서가 같으므로 직렬화 비교로 충분하다.
+const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
+
+function diff(prev: Objects, next: Objects): Change[] {
+  const out: Change[] = [];
+  for (const id of new Set([...Object.keys(prev), ...Object.keys(next)])) {
+    const a = prev[id];
+    const b = next[id];
+    if (a === b) continue;
+    for (const key of new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]))
+      if (!same(a?.[key], b?.[key])) out.push({ id, key, before: a?.[key], after: b?.[key] });
+  }
+  return out;
 }
 
 /** parent의 자식을 (order, id) 사전순으로 돌려준다. parent가 null이면 보드 위 Frame이다. */

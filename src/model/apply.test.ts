@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyOps, childrenOf, type Doc, type Op } from ".";
+import { applyOps, childrenOf, revert, type Doc, type Op } from ".";
 
 const empty: Doc = { schemaVersion: 1, objects: {} };
 
@@ -141,5 +141,36 @@ describe("트랜잭션", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatchObject({ code: "SCHEMA_INVALID", opIndex: 1 });
     expect(code(base)).toBe("SCHEMA_INVALID");
+  });
+});
+
+describe("revert", () => {
+  const apply = (doc: Doc, ...ops: Op[]) => {
+    const r = run(doc, ...ops);
+    if (!r.ok) throw new Error(r.error.code);
+    return r;
+  };
+
+  it("create·set·move·delete를 모두 되돌리고 다시 적용한다", () => {
+    const r = apply(
+      base,
+      { op: "create", id: "txt001", type: "text", parent: "sect01", placement: "first", props: { content: "a" } },
+      { op: "set", id: "box001", props: { "layout.mode": "grid" } },
+      { op: "move", id: "box002", parent: "sect01", placement: "last" },
+      { op: "delete", id: "frame1" },
+    );
+    expect(r.doc.objects).toEqual({});
+    const undo = revert(r.doc, r.changes);
+    expect(undo.doc).toEqual(base);
+    expect(revert(undo.doc, undo.changes).doc).toEqual(r.doc);
+  });
+
+  it("이후 다른 값으로 바뀐 키는 건너뛴다", () => {
+    const a = apply(base, { op: "set", id: "box001", props: { name: "A", hidden: true } });
+    const b = ok(a.doc, { op: "set", id: "box001", props: { name: "B" } });
+    const undo = revert(b, a.changes);
+    expect(undo.doc.objects.box001.name).toBe("B");
+    expect("hidden" in undo.doc.objects.box001).toBe(false);
+    expect(undo.changes).toEqual([{ id: "box001", key: "hidden", before: true, after: undefined }]);
   });
 });
