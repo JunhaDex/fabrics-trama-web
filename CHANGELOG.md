@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-31
+
+### Added
+
+- 토큰·modifier 객체와 검증(타입, 순환, 사용 중, 이름)
+- 토큰 CSS 사용자 정의 속성과 modifier 컨텍스트 블록 출력
+- 토큰 편집기, modifier 미리보기, 조합 미리보기, 램프 생성기, 토큰 바인딩
+- DTCG 2025.10 tokens.json·resolver.json 변환 (UI 연결 전)
+- 토큰 편집기에 DTCG 내보내기·가져오기 연결
+
 ## [0.4.0] - 2026-10-31
 
 ### Added
@@ -48,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 편집기 골격과 common-design 셸 구성
 
+[0.5.0]: https://github.com/JunhaDex/fabrics-trama-web/compare/v0.4.0..v0.5.0
 [0.4.0]: https://github.com/JunhaDex/fabrics-trama-web/compare/v0.3.0..v0.4.0
 [0.3.0]: https://github.com/JunhaDex/fabrics-trama-web/compare/v0.2.0..v0.3.0
 [0.2.0]: https://github.com/JunhaDex/fabrics-trama-web/compare/v0.1.0..v0.2.0
