@@ -210,7 +210,7 @@ function apply(o: Objects, op: Op, warnings: Warning[]) {
       const obj = get(o, op.id);
       checkProps(o, obj.type, op.id, frameOf(o, op.id), op.props, warnings);
       const next = { ...obj };
-      // variesBy가 바뀌면 이전 기준의 @ctx 값은 의미가 없으므로 지운다. 같은 연산에서 준 @ctx 값은 아래에서 다시 쓴다.
+      // 같은 연산에서 준 @ctx 값이 지워지지 않도록, props를 쓰기 전에 이전 @ctx 키를 지운다.
       if (obj.type === "token" && "variesBy" in op.props && op.props.variesBy !== obj.variesBy)
         for (const k of Object.keys(next)) if (k.startsWith("value@ctx:")) delete next[k];
       for (const [k, v] of Object.entries(op.props)) {
