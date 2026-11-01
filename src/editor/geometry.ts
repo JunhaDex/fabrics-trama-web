@@ -5,7 +5,10 @@ export type Rect = { x: number; y: number; w: number; h: number };
 
 export const iframes = new Map<string, HTMLIFrameElement>();
 
-/** Frame의 보드 위치와 미리보기 크기. 값이 없으면 기본값을 쓴다. */
+/** Frame의 최소 폭. 컴포넌트는 최소 폭이 없다. */
+export const minWidthOf = (f: Obj) => (f.type === "frame" ? ((f.minWidth as number) ?? 320) : 0);
+
+/** Frame·컴포넌트의 보드 위치와 미리보기 크기. 값이 없으면 기본값을 쓴다. */
 export function frameBox(f: Obj): Rect {
   return {
     x: (f.boardX as number) ?? 0,
@@ -92,7 +95,8 @@ export function hit(frames: [string, Obj][], x: number, y: number) {
     const ly = y - f.y;
     if (lx < 0 || ly < 0 || lx > (frame?.offsetWidth ?? f.w) || ly > (frame?.offsetHeight ?? f.h)) continue;
     const el = frame?.contentDocument?.elementFromPoint(lx, ly)?.closest("[data-id]");
-    return { frame: fid, id: el?.getAttribute("data-id") ?? fid };
+    // 인스턴스 안 요소의 data-id는 `<인스턴스 ID>/<노드 ID>` 경로이며, 선택은 인스턴스 단위다.
+    return { frame: fid, id: el?.getAttribute("data-id")?.split("/")[0] ?? fid };
   }
   return null;
 }

@@ -22,7 +22,7 @@ const rule = (r: Rule, pad: string) => `${pad}${r.sel} {\n${r.decls.map(([p, v])
 const sheet = (rules: Rule[], media: Media[]) =>
   [
     ...rules.map((r) => rule(r, "")),
-    ...media.map((m) => `@media ${m.query} {\n${m.rules.map((r) => rule(r, "  ")).join("\n")}}\n`),
+    ...media.map((m) => `${m.at} {\n${m.rules.map((r) => rule(r, "  ")).join("\n")}}\n`),
   ].join("\n");
 
 export const css = (page: Page) => sheet(page.rules, page.media);
@@ -58,7 +58,8 @@ export function toPreview(page: Page): string {
 }
 
 /**
- * 노드 하나와 그 하위 노드의 HTML·CSS 조각. CSS는 그 노드들의 규칙과 `@media` 규칙만 담고 페이지 전체의 리셋 규칙은 뺀다.
+ * 노드 하나와 그 하위 노드의 HTML·CSS 조각. CSS는 조각 안 요소의 클래스만으로 이루어진 규칙(`@media`·`@container` 안 포함)과
+ * 토큰 규칙만 담고 페이지 전체의 리셋 규칙은 뺀다.
  * Frame 안에 없는 ID면 null이다.
  */
 export function toSnippet(page: Page, id: string): { html: string; css: string } | null {
@@ -72,13 +73,18 @@ export function toSnippet(page: Page, id: string): { html: string; css: string }
   };
   const root = find(page.body);
   if (!root) return null;
-  const sels = new Set<string>();
+  const names = new Set<string>();
   const walk = (e: El) => {
-    sels.add(e.id ? `.n-${e.id}` : e.tag);
+    names.add(e.tag);
+    for (const c of e.attrs.find(([k]) => k === "class")?.[1].split(" ") ?? []) names.add(`.${c}`);
     e.children.forEach(walk);
   };
   walk(root);
-  const keep = (r: Rule) => sels.has(r.sel) || r.sel.startsWith(":root");
+  const keep = (r: Rule) => {
+    if (r.sel.startsWith(":root")) return true;
+    const classes = r.sel.match(/\.[A-Za-z0-9_-]+/g);
+    return classes ? classes.every((c) => names.has(c)) : names.has(r.sel);
+  };
   return {
     html: el(root, { dataId: false, dataLayout: false }, 0) + "\n",
     css: sheet(

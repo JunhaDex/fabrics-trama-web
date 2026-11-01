@@ -1,4 +1,16 @@
-import { breakpointsOf, childrenOf, modifiersOf, tokenValueAt, type Doc, type Obj, type Objects } from "../model";
+import {
+  breakpointsOf,
+  childrenOf,
+  componentPropsOf,
+  modifiersOf,
+  optionsOf,
+  overrideTarget,
+  STATES,
+  tokenValueAt,
+  type Doc,
+  type Obj,
+  type Objects,
+} from "../model";
 
 export type Decl = [prop: string, value: string];
 export type Rule = { sel: string; decls: Decl[] };
@@ -10,7 +22,10 @@ export type El = {
   text: string | null;
   children: El[];
 };
-export type Media = { query: string; rules: Rule[] };
+/** `@media …` 또는 `@container …` 블록. at은 블록 머리(`@media (min-width: 768px)`)다. */
+export type Media = { at: string; rules: Rule[] };
+/** 컴포넌트 보드 미리보기용 옵션. 루트에 속성 값과 `data-trama-state`를 붙이고, 상태 선택자가 그 속성에도 반응한다. */
+export type BuildOpts = { preview?: { props: Record<string, string>; state: string | null } };
 export type Page = { title: string; safeArea: boolean; body: El; rules: Rule[]; media: Media[] };
 
 type Dim = { value: number; unit: string };
@@ -91,50 +106,216 @@ function tokenRules(objects: Objects, ids: string[]): { rules: Rule[]; media: Me
         .filter(([p, v]) => root.get(p) !== v);
       if (!decls.length) continue;
       rules.push({ sel: `:root[data-${m.name}="${ctx}"]`, decls });
-      if (mid === "_mode" && ctx === "dark") media.push({ query: "(prefers-color-scheme: dark)", rules: [{ sel: ":root:not([data-mode])", decls }] });
+      if (mid === "_mode" && ctx === "dark") media.push({ at: "@media (prefers-color-scheme: dark)", rules: [{ sel: ":root:not([data-mode])", decls }] });
     }
   return { rules, media };
 }
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 
-export function build(doc: Doc, frameId: string): Page {
-  const bps = breakpointsOf(doc.objects, frameId).map(([id, o]) => ({ id, min: o.minWidth as number }));
-  const order: string[] = [];
+const PSEUDO: Record<string, string> = { hover: ":hover", pressed: ":active", focus: ":focus-visible", disabled: "[disabled]" };
+
+const sorted = (m: Map<string, string>): Decl[] => [...m].sort(([a], [b]) => (a < b ? -1 : 1));
+
+/** prev 상태에서 next 상태로 바꾸는 선언. prev에만 있는 선언은 `revert`다. */
+function delta(prev: Map<string, string>, next: Map<string, string>): Map<string, string> {
+  const d = new Map([...next].filter(([p, v]) => prev.get(p) !== v));
+  for (const p of prev.keys()) if (!next.has(p)) d.set(p, "revert");
+  return d;
+}
+
+function overlay(base: Map<string, string>, d: Map<string, string>): Map<string, string> {
+  const out = new Map(base);
+  for (const [p, v] of d) {
+    if (v === "revert") out.delete(p);
+    else out.set(p, v);
+  }
+  return out;
+}
+
+type Overrides = Map<string, Record<string, unknown>>;
+
+/** 인스턴스의 `node.<경로>.<키>` 값을 경로별로 모은다. */
+function overridesOf(inst: Obj): Overrides {
+  const out: Overrides = new Map();
+  for (const [k, v] of Object.entries(inst)) {
+    if (!k.startsWith("node.")) continue;
+    const dot = k.indexOf(".", 5);
+    const path = k.slice(5, dot);
+    out.set(path, { ...out.get(path), [k.slice(dot + 1)]: v });
+  }
+  return out;
+}
+
+export function build(doc: Doc, rootId: string, opts: BuildOpts = {}): Page {
+  const objs = doc.objects;
+  const root = objs[rootId];
+  const bps = root.type === "frame" ? breakpointsOf(objs, rootId).map(([id, o]) => ({ id, min: o.minWidth as number })) : [];
+  const used: string[] = [];
   const cache = new Map<string, Obj>();
 
-  // state -1은 base, i는 bps[0..i]의 override까지 적용한 상태다.
-  const at = (id: string, state: number): Obj => {
-    const key = `${id}|${state}`;
+  const css = (o: Obj): Obj => {
+    for (const [k, v] of Object.entries(o))
+      if (v && typeof v === "object" && "token" in v)
+        o[k] = { css: `var(${cssVar(objs[(v as { token: string }).token].name as string)})` } satisfies Css;
+    return o;
+  };
+
+  // sfx는 차례로 덮어쓸 조건 목록이다(예: ["@bp:b1", "@bp:b2"]). 조건이 정확히 같은 키만 기본키 값으로 덮어쓴다.
+  const at = (id: string, sfx: string[]): Obj => {
+    const key = `${id}|${sfx.join("")}`;
     let o = cache.get(key);
     if (!o) {
-      const src = doc.objects[id];
+      const src = objs[id];
       o = Object.fromEntries(Object.entries(src).filter(([k]) => !k.includes("@"))) as Obj;
-      for (let i = 0; i <= state; i++)
-        for (const [k, v] of Object.entries(src)) if (k.endsWith(`@bp:${bps[i].id}`)) o[k.slice(0, k.indexOf("@"))] = v;
-      for (const [k, v] of Object.entries(o))
-        if (v && typeof v === "object" && "token" in v)
-          o[k] = { css: `var(${cssVar(doc.objects[(v as { token: string }).token].name as string)})` } satisfies Css;
-      cache.set(key, o);
+      for (const c of sfx)
+        for (const [k, v] of Object.entries(src)) {
+          const i = k.indexOf("@");
+          if (i >= 0 && k.slice(i) === c) o[k.slice(0, i)] = v;
+        }
+      cache.set(key, css(o));
     }
     return o;
   };
 
-  const declsAt = (id: string, state: number): Map<string, string> => {
-    const o = at(id, state);
-    const parent = o.parent === null ? null : at(o.parent, state);
-    const kids = childrenOf(doc.objects, id);
-    const d = [...(hasLayout(o) ? layoutDecls(o) : []), ...(parent ? childDecls(o, parent) : frameDecls(o))];
+  const cqsOf = (tree: string[]) =>
+    [...new Set(tree.flatMap((id) => Object.keys(objs[id]).flatMap((k) => /@cq:(\d+)$/.exec(k)?.[1] ?? [])).map(Number))].sort((a, b) => a - b);
+  const cqCache = new Map<string, number[]>();
+
+  const declsAt = (id: string, sfx: string[], patch?: Record<string, unknown>): Map<string, string> => {
+    const o = patch ? css({ ...at(id, sfx), ...patch }) : at(id, sfx);
+    const parent = o.parent === null ? null : at(o.parent, sfx);
+    const kids = childrenOf(objs, id);
+    const d = [...(hasLayout(o) ? layoutDecls(o) : []), ...(parent ? childDecls(o, parent) : o.type === "frame" ? frameDecls(o) : [])];
+    if (o.type === "component" && cqCache.get(id)?.length) d.push(["container-name", `c-${id}`], ["container-type", "inline-size"]);
     // absolute 노드는 그 자체로 기준 상자가 되므로 relative를 덧붙이지 않는다.
-    if (o.position !== "absolute" && kids.some(([cid]) => at(cid, state).position === "absolute")) d.push(["position", "relative"]);
+    if (o.position !== "absolute" && kids.some(([cid]) => at(cid, sfx).position === "absolute")) d.push(["position", "relative"]);
     for (const [k, v] of Object.entries(o)) if (k.startsWith("style.")) d.push([k.slice(6), value(v)]);
     const m = new Map(d);
     if (o.hidden) m.set("display", "none");
     return m;
   };
 
+  const tree = (id: string): string[] => [id, ...childrenOf(objs, id).flatMap(([cid]) => tree(cid))];
+
+  /** 인스턴스 override 중 CSS로 나가는 값(숨김, 토큰 바인딩)의 규칙. 원본 base 값을 대신하므로 변형·상태 규칙보다 약하다. */
+  const overrideRules = (inst: string): Rule[] => {
+    const comp = objs[inst].component as string;
+    const out: Rule[] = [];
+    for (const [path, keys] of [...overridesOf(objs[inst])].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      const patch = Object.fromEntries(Object.entries(keys).filter(([k]) => k !== "content" && k !== "src" && k !== "alt"));
+      const segs = path.split("/");
+      const target = overrideTarget(objs, comp, segs);
+      if (!target || !Object.keys(patch).length) continue;
+      let cur = comp;
+      let sel = `.n-${inst}`;
+      segs.forEach((s, i) => {
+        if (i < segs.length - 1) cur = objs[s].component as string;
+        if (s !== cur) sel += ` .n-${s}`;
+      });
+      const d = delta(declsAt(target, []), declsAt(target, [], patch));
+      if (d.size) out.push({ sel, decls: sorted(d) });
+    }
+    return out;
+  };
+
+  const sections: Rule[] = [];
+  const containers: Media[] = [];
+  const done = new Set<string>();
+  const pseudo = (s: string) => (opts.preview ? `:is(${PSEUDO[s]}, [data-trama-state="${s}"])` : PSEUDO[s]);
+
+  /** 컴포넌트 규칙을 한 번만 낸다. 중첩 인스턴스의 컴포넌트를 먼저 내 바깥 컴포넌트의 배치 규칙이 뒤에 오게 한다. */
+  const ensure = (comp: string) => {
+    if (done.has(comp)) return;
+    done.add(comp);
+    const ids = tree(comp);
+    for (const id of ids) if (objs[id].type === "instance") ensure(objs[id].component as string);
+    used.push(...ids);
+    const cqs = cqsOf(ids);
+    cqCache.set(comp, cqs);
+    const sel = (id: string, scope: string) => (id === comp ? scope : `${scope} .n-${id}`);
+    const base = new Map(ids.map((id) => [id, declsAt(id, [])]));
+    for (const id of ids) {
+      const d = base.get(id)!;
+      if (d.size) sections.push({ sel: id === comp ? `.c-${comp}` : `.n-${id}`, decls: sorted(d) });
+      if (objs[id].type === "instance") sections.push(...overrideRules(id));
+    }
+    const has = (cond: string) => ids.some((id) => Object.keys(objs[id]).some((k) => k.endsWith(cond)));
+    const emit = (sfx: string[], scope: string, prev: (id: string) => Map<string, string>) => {
+      for (const id of ids) {
+        const d = delta(prev(id), declsAt(id, sfx));
+        if (d.size) sections.push({ sel: sel(id, scope), decls: sorted(d) });
+      }
+    };
+    const vars = componentPropsOf(objs, comp).flatMap(([cp, p]) =>
+      optionsOf(p).map((opt) => ({ cond: `@var:${cp}=${opt}`, scope: `.c-${comp}[data-${p.name}="${opt}"]` })),
+    );
+    for (const v of vars) if (has(v.cond)) emit([v.cond], v.scope, (id) => base.get(id)!);
+    for (const s of STATES) if (has(`@state:${s}`)) emit([`@state:${s}`], `.c-${comp}${pseudo(s)}`, (id) => base.get(id)!);
+    for (const v of vars)
+      for (const s of STATES) {
+        const both = `${v.cond}@state:${s}`;
+        if (!has(both)) continue;
+        emit([v.cond, `@state:${s}`, both], `${v.scope}${pseudo(s)}`, (id) => {
+          const b = base.get(id)!;
+          return overlay(overlay(b, delta(b, declsAt(id, [v.cond]))), delta(b, declsAt(id, [`@state:${s}`])));
+        });
+      }
+    cqs.forEach((n, i) => {
+      const prev = cqs.slice(0, i).map((c) => `@cq:${c}`);
+      const next = [...prev, `@cq:${n}`];
+      const rules = ids.flatMap((id) => {
+        const d = delta(declsAt(id, prev), declsAt(id, next));
+        return d.size ? [{ sel: `.n-${id}`, decls: sorted(d) }] : [];
+      });
+      if (rules.length) containers.push({ at: `@container c-${comp} (min-width: ${n}px)`, rules });
+    });
+  };
+
+  /** 컴포넌트 트리를 펼친 요소. 인스턴스면 inst가 그 ID이고, 요소 ID는 prefix를 붙인 경로다. */
+  const expand = (comp: string, inst: string | null, values: Record<string, unknown>, over: Overrides, prefix: string, elId: string): El => {
+    ensure(comp);
+    const c = objs[comp];
+    const attrs: [string, string][] = [["class", inst ? `c-${comp} n-${inst}` : `c-${comp}`]];
+    for (const [cp, p] of componentPropsOf(objs, comp)) attrs.push([`data-${p.name}`, ((values[cp] as string) ?? p.default) as string]);
+    if (!inst && opts.preview?.state) attrs.push(["data-trama-state", opts.preview.state]);
+    const inner = (id: string): El => {
+      const o = objs[id];
+      const ov = over.get(id) ?? {};
+      if (o.type === "instance") {
+        const merged: Overrides = overridesOf(o);
+        for (const [path, keys] of over) if (path.startsWith(`${id}/`)) merged.set(path.slice(id.length + 1), { ...merged.get(path.slice(id.length + 1)), ...keys });
+        const values = Object.fromEntries(Object.entries(o).filter(([k]) => k.startsWith("props.")).map(([k, v]) => [k.slice(6), v]));
+        return expand(o.component as string, id, values, merged, `${prefix}${id}/`, prefix + id);
+      }
+      const a: [string, string][] = [["class", `n-${id}`]];
+      if (o.type === "image") a.push(["src", ((ov.src ?? o.src) as string) ?? ""], ["alt", ((ov.alt ?? o.alt) as string) ?? ""]);
+      return {
+        id: prefix + id,
+        tag: (o.tag as string) ?? DEFAULT_TAG[o.type],
+        attrs: a,
+        layout: hasLayout(o) ? mode(o) : null,
+        text: o.type === "text" ? (((ov.content ?? o.content) as string) ?? "") : null,
+        children: childrenOf(objs, id).map(([cid]) => inner(cid)),
+      };
+    };
+    return {
+      id: elId,
+      tag: (c.tag as string) ?? "div",
+      attrs,
+      layout: mode(c),
+      text: null,
+      children: childrenOf(objs, comp).map(([cid]) => inner(cid)),
+    };
+  };
+
+  const order: string[] = [];
   const visit = (id: string, o: Obj, isBody: boolean): El => {
     order.push(id);
-    const kids = childrenOf(doc.objects, id);
+    if (o.type === "instance") {
+      const values = Object.fromEntries(Object.entries(o).filter(([k]) => k.startsWith("props.")).map(([k, v]) => [k.slice(6), v]));
+      return expand(o.component as string, id, values, overridesOf(o), `${id}/`, id);
+    }
+    const kids = childrenOf(objs, id);
     const attrs: [string, string][] = [["class", `n-${id}`]];
     if (o.type === "image") attrs.push(["src", (o.src as string) ?? ""], ["alt", (o.alt as string) ?? ""]);
     const el: El = {
@@ -152,31 +333,31 @@ export function build(doc: Doc, frameId: string): Page {
     return sources.length ? wrap("picture", [], [...sources, el]) : el;
   };
 
-  const frame = doc.objects[frameId];
-  const body = visit(frameId, frame, true);
-  const sorted = (m: Map<string, string>): Decl[] => [...m].sort(([a], [b]) => (a < b ? -1 : 1));
+  const body =
+    root.type === "component"
+      ? wrap("body", [], [expand(rootId, null, opts.preview?.props ?? {}, new Map(), "", rootId)])
+      : visit(rootId, root, true);
   const rules: Rule[] = [RESET];
-  if (Object.values(doc.objects).some((o) => Object.keys(o).some((k) => k.startsWith("src@bp:"))))
+  if (Object.values(objs).some((o) => Object.keys(o).some((k) => k.startsWith("src@bp:"))))
     rules.push({ sel: "picture", decls: [["display", "contents"]] });
-  const tokens = tokenRules(doc.objects, order);
-  rules.push(...tokens.rules);
+  const tokens = tokenRules(objs, [...used, ...order]);
+  rules.push(...tokens.rules, ...sections);
   for (const id of order) {
-    const d = declsAt(id, -1);
+    const d = declsAt(id, []);
     if (d.size) rules.push({ sel: `.n-${id}`, decls: sorted(d) });
+    if (objs[id].type === "instance") rules.push(...overrideRules(id));
   }
   const media = bps.flatMap(({ min }, i): Media[] => {
+    const prev = bps.slice(0, i).map((b) => `@bp:${b.id}`);
+    const next = [...prev, `@bp:${bps[i].id}`];
     const changed: Rule[] = [];
     for (const id of order) {
-      const prev = declsAt(id, i - 1);
-      const next = declsAt(id, i);
-      const d = new Map([...next].filter(([p, v]) => prev.get(p) !== v));
-      for (const p of prev.keys()) if (!next.has(p)) d.set(p, "revert");
+      const d = delta(declsAt(id, prev), declsAt(id, next));
       if (d.size) changed.push({ sel: `.n-${id}`, decls: sorted(d) });
     }
-    return changed.length ? [{ query: `(min-width: ${min}px)`, rules: changed }] : [];
+    return changed.length ? [{ at: `@media (min-width: ${min}px)`, rules: changed }] : [];
   });
-  media.unshift(...tokens.media);
-  return { title: (frame.name as string) ?? "", safeArea: frame.safeArea === true, body, rules, media };
+  return { title: (root.name as string) ?? "", safeArea: root.safeArea === true, body, rules, media: [...tokens.media, ...media, ...containers] };
 }
 
 const wrap = (tag: string, attrs: [string, string][], children: El[] = []): El => ({
@@ -188,7 +369,7 @@ const wrap = (tag: string, attrs: [string, string][], children: El[] = []): El =
   children,
 });
 
-const hasLayout = (o: Obj) => o.type === "frame" || o.type === "section" || o.type === "container";
+const hasLayout = (o: Obj) => o.type === "frame" || o.type === "component" || o.type === "section" || o.type === "container";
 const mode = (o: Obj) => (o["layout.mode"] as string) ?? "flex-column";
 
 function layoutDecls(o: Obj): Decl[] {

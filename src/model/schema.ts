@@ -53,9 +53,9 @@ const intMin1 = z.number().int().min(1);
 const sizeOf = (key: string) => bind(key, "dimension", z.union([z.enum(["fill", "hug"]), Dimension]));
 const dim = (key: string) => bind(key, "dimension", Dimension);
 
-export const NODE_TYPES = ["frame", "section", "container", "text", "image"] as const;
+export const NODE_TYPES = ["frame", "component", "section", "container", "text", "image", "instance"] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
-export const OBJ_TYPES = [...NODE_TYPES, "breakpoint", "modifier", "token"] as const;
+export const OBJ_TYPES = [...NODE_TYPES, "breakpoint", "componentProp", "modifier", "token"] as const;
 export type ObjType = (typeof OBJ_TYPES)[number];
 
 const common = {
@@ -112,15 +112,23 @@ const box = {
 };
 
 const tag = (tags: [string, ...string[]]) => ({ tag: z.enum(tags) });
+const CONTAINER_TAGS: [string, ...string[]] = ["div", "ul", "ol", "li", "figure", "a", "button", "form", "label"];
+const ident = z.string().regex(/^[a-z][a-z0-9-]*$/);
 
 export const KEYS: Record<ObjType, Record<string, z.ZodType>> = {
   breakpoint: {
     name: z.string(),
     minWidth: z.number().int().positive(),
   },
+  componentProp: {
+    name: ident,
+    kind: z.enum(["enum", "boolean"]),
+    options: z.array(ident).min(1).refine((a) => new Set(a).size === a.length).meta({ description: "enum만. 중복 없음" }),
+    default: z.string(),
+  },
   modifier: {
-    name: z.string().regex(/^[a-z][a-z0-9-]*$/),
-    contexts: z.array(z.string().regex(/^[a-z][a-z0-9-]*$/)).min(2).refine((a) => new Set(a).size === a.length),
+    name: ident,
+    contexts: z.array(ident).min(2).refine((a) => new Set(a).size === a.length),
     default: z.string(),
   },
   token: {
@@ -144,6 +152,17 @@ export const KEYS: Record<ObjType, Record<string, z.ZodType>> = {
     ...text,
     "style.background-color": bind("style.background-color", "color", Color),
   },
+  component: {
+    ...common,
+    ...layout,
+    ...text,
+    ...box,
+    ...tag(CONTAINER_TAGS),
+    boardX: z.number().finite(),
+    boardY: z.number().finite(),
+    previewWidth: z.number().finite().positive(),
+    previewHeight: z.number().finite().positive(),
+  },
   section: {
     ...common,
     ...layout,
@@ -158,7 +177,7 @@ export const KEYS: Record<ObjType, Record<string, z.ZodType>> = {
     ...child,
     ...text,
     ...box,
-    ...tag(["div", "ul", "ol", "li", "figure", "a", "button", "form", "label"]),
+    ...tag(CONTAINER_TAGS),
   },
   text: {
     ...common,
@@ -176,22 +195,39 @@ export const KEYS: Record<ObjType, Record<string, z.ZodType>> = {
     ...box,
     "style.object-fit": z.enum(["cover", "contain", "fill"]),
   },
+  instance: {
+    ...common,
+    ...child,
+    component: Id,
+  },
 };
 
-/** 키가 `@bp:` 조건을 받을 수 있는지. */
-export function bpAllowed(key: string) {
-  return /^(layout|size|grid|style)\./.test(key) || ["x", "y", "w", "h", "hidden", "src"].includes(key);
+/** 인스턴스 override(`node.<경로>.<키>`)로 바꿀 수 있는 키. 이 밖에는 원본 값이 토큰 바인딩인 키를 다른 토큰으로 바꿀 수 있다. */
+export const OVERRIDE_KEYS: Record<string, z.ZodType> = { content: z.string(), src: z.string(), alt: z.string(), hidden: z.boolean() };
+
+export const STATES = ["hover", "pressed", "focus", "disabled"] as const;
+export type Condition = "bp" | "cq" | "var" | "state";
+
+/** 기본키가 그 종류의 조건을 받을 수 있는지. */
+export function condAllowed(key: string, cond: Condition) {
+  if (key.startsWith("style.")) return true;
+  if (cond === "state") return false;
+  if (key === "src") return cond === "bp";
+  return /^(layout|size|grid)\./.test(key) || ["x", "y", "w", "h", "hidden"].includes(key);
 }
 
 export const PARENTS: Record<ObjType, (ObjType | null)[]> = {
   breakpoint: ["frame"],
+  componentProp: ["component"],
   modifier: [null],
   token: [null],
   frame: [null],
+  component: [null],
   section: ["frame"],
-  container: ["frame", "section", "container"],
-  text: ["frame", "section", "container"],
-  image: ["frame", "section", "container"],
+  container: ["frame", "component", "section", "container"],
+  text: ["frame", "component", "section", "container"],
+  image: ["frame", "component", "section", "container"],
+  instance: ["frame", "component", "section", "container"],
 };
 
 export const Placement = z.union([
@@ -214,6 +250,7 @@ export const Op = z.discriminatedUnion("op", [
   z.strictObject({ op: z.literal("set"), id: Id, props: Props }),
   z.strictObject({ op: z.literal("move"), id: Id, parent: Id.nullable(), placement: Placement }),
   z.strictObject({ op: z.literal("delete"), id: Id }),
+  z.strictObject({ op: z.literal("detach"), id: Id }),
 ]);
 
 export const Tx = z.strictObject({

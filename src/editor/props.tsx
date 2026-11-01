@@ -4,8 +4,9 @@ import { Button, Icon, Input, Select, Switch, Textarea } from "@junhadex/core";
 import { RotateCcw, Trash2, X } from "lucide";
 import { useId, type ReactNode } from "react";
 import { z } from "zod";
-import { BIND_TYPE, breakpointsOf, frameOf, KEYS, tokensOf, type Doc, type NodeType } from "@/model";
-import { activeBp, effective, overridden, write } from "./bp";
+import { BIND_TYPE, breakpointsOf, frameOf, KEYS, parseKey, tokensOf, type Doc, type NodeType } from "@/model";
+import { activeBp, context, effective, overridden, write } from "./bp";
+import { ComponentProps, InstancePanel, toComponent } from "./component";
 import { hex, toColor, type Color } from "./color";
 import { localRect } from "./geometry";
 import { apply, newId, useEditor } from "./store";
@@ -15,7 +16,14 @@ const isBinding = (v: unknown): v is { token: string } => typeof v === "object" 
 
 const set = (id: string, props: Record<string, unknown>) => apply({ op: "set", id, props });
 const round = (n: number) => Math.round(n * 100) / 100;
-const DEFAULT_TAG: Partial<Record<NodeType, string>> = { section: "section", container: "div", text: "p" };
+const DEFAULT_TAG: Partial<Record<NodeType, string>> = { component: "div", section: "section", container: "div", text: "p" };
+
+/** 편집 조건을 사람이 읽는 이름으로 바꾼다. 예: `tone=danger · hover`, `컨테이너 ≥ 480px`. */
+function describe(doc: Doc, target: string): string {
+  const k = parseKey(`x${target}`)!;
+  if (k.cq !== undefined) return `컨테이너 ≥ ${k.cq}px`;
+  return [k.var && `${doc.objects[k.var[0]]?.name as string}=${k.var[1]}`, k.state].filter(Boolean).join(" · ");
+}
 
 function options(type: NodeType, key: string): string[] {
   const s = KEYS[type][key];
@@ -25,6 +33,7 @@ function options(type: NodeType, key: string): string[] {
 export function Props() {
   const doc = useEditor((s) => s.doc);
   const id = useEditor((s) => s.selected);
+  useEditor((s) => s.comp);
   if (!id) return <p className="p-3 text-sm text-on-surface-muted">노드를 선택하세요</p>;
   const o = effective(doc, id);
   const t = o.type as NodeType;
@@ -32,7 +41,9 @@ export function Props() {
   const v = (k: string) => o[k];
   const f = (k: string) => ({ id, k, value: o[k], reset: overridden(doc, id, k) ? () => write(id, k, null) : undefined });
   const parentMode = o.parent ? ((effective(doc, o.parent)["layout.mode"] as string) ?? "flex-column") : null;
-  const bp = activeBp(doc, frameOf(doc.objects, id));
+  const root = frameOf(doc.objects, id);
+  const bp = doc.objects[root].type === "frame" ? activeBp(doc, root) : null;
+  const target = doc.objects[root].type === "component" ? context(doc, root).target : null;
   const mode = (v("layout.mode") as string) ?? "flex-column";
   const abs = v("position") === "absolute";
 
@@ -44,11 +55,22 @@ export function Props() {
           override로 저장되고, 이름·태그·내용·position 편집은 모든 BP에 적용됩니다.
         </p>
       )}
+      {target && (
+        <p className="rounded bg-brand-subtle p-2 text-xs text-on-brand-subtle">
+          편집 조건: {describe(doc, target)}. {target.includes("@state") ? "스타일" : "레이아웃·스타일·숨김"}은
+          이 조건의 override로 저장되고, 그 밖의 편집은 원본 base에 적용됩니다.
+        </p>
+      )}
       <Group title="노드">
         <Text {...f("name")} label="이름" />
         {has("tag") && <Choice {...f("tag")} opts={options(t, "tag")} def={DEFAULT_TAG[t]!} label="태그" />}
         <Toggle {...f("hidden")} label="숨김" />
         {t === "text" && <Text {...f("content")} label="내용" multiline />}
+        {t === "container" && (
+          <Button size="sm" variant="secondary" onClick={() => toComponent(doc, id)}>
+            컴포넌트로 만들기
+          </Button>
+        )}
         {t === "image" && (
           <>
             <Text {...f("src")} label="src" />
@@ -58,7 +80,22 @@ export function Props() {
         )}
       </Group>
 
-      <Group title="스타일">
+      {t === "instance" && (
+        <Group title="인스턴스">
+          <InstancePanel doc={doc} id={id} />
+        </Group>
+      )}
+
+      {t === "component" && (
+        <Group title="컴포넌트">
+          {(["boardX", "boardY", "previewWidth", "previewHeight"] as const).map((k) => (
+            <Num key={k} {...f(k)} label={k} />
+          ))}
+          <ComponentProps doc={doc} comp={id} />
+        </Group>
+      )}
+
+      {t !== "instance" && <Group title="스타일">
         {has("style.background-color") && <ColorField {...f("style.background-color")} label="배경" />}
         {has("style.color") && (
           <>
@@ -79,7 +116,7 @@ export function Props() {
             <Num {...f("style.border-radius")} label="모서리" dim />
           </>
         )}
-      </Group>
+      </Group>}
 
       {t === "frame" && (
         <Group title="Frame">

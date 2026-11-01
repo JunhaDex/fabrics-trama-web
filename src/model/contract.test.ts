@@ -12,12 +12,18 @@ describe("JSON Schema", () => {
   it("trama-ops.schema.json", async () => {
     const props = (t: (typeof OBJ_TYPES)[number]) =>
       z.strictObject(Object.fromEntries(Object.entries(KEYS[t]).map(([k, s]) => [k, s.nullable()]))).partial();
+    const instance = strip(z.toJSONSchema(props("instance")));
+    // props.*·node.* 키는 zod 객체로 표현되지 않으므로 패턴 속성으로 덧붙인다.
+    instance.patternProperties = {
+      "^props\\.[A-Za-z0-9_-]{6,32}$": { type: ["string", "null"], description: "componentProp ID → 옵션 값" },
+      "^node\\.[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*\\.": { description: "인스턴스 override. 값은 기본키의 형식" },
+    };
     const schema = {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       $id: "trama-ops.schema.json",
       $defs: {
         Transaction: strip(z.toJSONSchema(Tx)),
-        ...Object.fromEntries(OBJ_TYPES.map((t) => [`${t}Props`, strip(z.toJSONSchema(props(t)))])),
+        ...Object.fromEntries(OBJ_TYPES.map((t) => [`${t}Props`, t === "instance" ? instance : strip(z.toJSONSchema(props(t)))])),
       },
     };
     await expect(JSON.stringify(schema, null, 2) + "\n").toMatchFileSnapshot(DIR + "trama-ops.schema.json");
@@ -35,6 +41,17 @@ const base: Doc = {
     box001: { type: "container", parent: "sect01", order: "a0" },
     box002: { type: "container", parent: "box001", order: "a0" },
     txt001: { type: "text", parent: "sect01", order: "a1", content: "hello" },
+  },
+};
+
+const comp: Doc = {
+  schemaVersion: 1,
+  objects: {
+    ...base.objects,
+    button: { type: "component", parent: null, order: "a1", name: "Button", tag: "button" },
+    tone01: { type: "componentProp", parent: "button", name: "tone", kind: "enum", options: ["primary", "danger"], default: "primary" },
+    label1: { type: "text", parent: "button", order: "a0", content: "확인", "style.font-size": { value: 14, unit: "px" } },
+    inst01: { type: "instance", parent: "sect01", order: "a2", component: "button" },
   },
 };
 
@@ -136,10 +153,47 @@ const GROUPS: Record<string, Case[]> = {
       { op: "create", id: "tkFont1", type: "token", parent: null, props: { name: "font.body", tokenType: "fontFamily", value: ["Pretendard"] } },
     ] },
   ],
+  component: [
+    { name: "컴포넌트·속성·인스턴스 생성", doc: base, ops: [
+      create("button", "component", null, "last", { name: "Button", tag: "button" }),
+      { op: "create", id: "tone01", type: "componentProp", parent: "button", props: { name: "tone", kind: "enum", options: ["primary", "danger"], default: "primary" } },
+      { op: "create", id: "icon01", type: "componentProp", parent: "button", props: { name: "icon", kind: "boolean", default: "true" } },
+      create("label1", "text", "button", "last", { content: "확인" }),
+      create("inst01", "instance", "sect01", "last", { component: "button", "props.tone01": "danger", "node.label1.content": "삭제" }),
+    ] },
+    { name: "변형·상태·컨테이너 쿼리 조건 키", doc: comp, ops: [
+      { op: "set", id: "label1", props: { "style.font-size@var:tone01=danger": { value: 20, unit: "px" }, "style.font-size@var:tone01=danger@state:hover": { value: 22, unit: "px" }, "size.width@cq:480": "fill" } },
+    ] },
+    { name: "조건 순서 오류", doc: comp, ops: [{ op: "set", id: "label1", props: { "style.font-size@state:hover@var:tone01=danger": { value: 1, unit: "px" } } }] },
+    { name: "@cq와 다른 조건의 조합", doc: comp, ops: [{ op: "set", id: "label1", props: { "style.font-size@cq:480@state:hover": { value: 1, unit: "px" } } }] },
+    { name: "Frame 안 노드의 @var", doc: comp, ops: [{ op: "set", id: "box001", props: { "hidden@var:tone01=danger": true } }] },
+    { name: "없는 옵션", doc: comp, ops: [{ op: "set", id: "label1", props: { "hidden@var:tone01=ghost": true } }] },
+    { name: "enum이 아닌 componentProp의 options", doc: comp, ops: [
+      { op: "create", id: "icon01", type: "componentProp", parent: "button", props: { name: "icon", kind: "boolean", options: ["a"], default: "a" } },
+    ] },
+    { name: "componentProp 이름 중복", doc: comp, ops: [
+      { op: "create", id: "tone02", type: "componentProp", parent: "button", props: { name: "tone", kind: "boolean", default: "true" } },
+    ] },
+    { name: "인스턴스에서 바꿀 수 없는 키", doc: comp, ops: [{ op: "set", id: "inst01", props: { "node.label1.style.font-size": { value: 9, unit: "px" } } }] },
+    { name: "없는 override 경로", doc: comp, ops: [{ op: "set", id: "inst01", props: { "node.box001.content": "x" } }] },
+    { name: "인스턴스 component 변경", doc: comp, ops: [{ op: "set", id: "inst01", props: { component: "button" } }] },
+    { name: "자기 자신을 포함하는 컴포넌트", doc: comp, ops: [create("inst02", "instance", "button", "last", { component: "button" })] },
+    { name: "쓰이는 컴포넌트 삭제", doc: comp, ops: [{ op: "delete", id: "button" }] },
+    { name: "옵션 삭제 시 변형 키와 인스턴스 값 정리", doc: comp, ops: [
+      { op: "set", id: "label1", props: { "hidden@var:tone01=danger": true } },
+      { op: "set", id: "inst01", props: { "props.tone01": "danger" } },
+      { op: "set", id: "tone01", props: { options: ["primary", "ghost"] } },
+    ] },
+    { name: "detach", doc: comp, ops: [
+      { op: "set", id: "label1", props: { "style.font-size@var:tone01=danger": { value: 20, unit: "px" }, "style.color@state:hover": { colorSpace: "srgb", components: [1, 0, 0] } } },
+      { op: "set", id: "inst01", props: { "props.tone01": "danger", "node.label1.content": "삭제", "size.width": "fill" } },
+      { op: "detach", id: "inst01" },
+    ] },
+  ],
   delete: [{ name: "하위 노드를 함께 삭제", doc: base, ops: [{ op: "delete", id: "box001" }] }],
   transaction: [
     { name: "뒤 연산이 실패하면 전부 거부", doc: base, ops: [{ op: "delete", id: "box002" }, { op: "set", id: "box001", props: { "layout.mode": "block" } }] },
-    { name: "알 수 없는 연산", doc: base, ops: [{ op: "delete", id: "box002" }, { op: "detach", id: "box001" }] },
+    { name: "알 수 없는 연산", doc: base, ops: [{ op: "delete", id: "box002" }, { op: "rename", id: "box001" }] },
     { name: "빈 연산 배열", doc: base, ops: [] },
   ],
 };
