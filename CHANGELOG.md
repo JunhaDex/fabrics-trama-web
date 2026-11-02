@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-02
+
+### Added
+
+- 컴포넌트·인스턴스·변형·상태 모델과 HTML 출력
+- 편집기 컴포넌트 보드·인스턴스 패널·연결 해제
+
 ## [0.5.0] - 2026-10-31
 
 ### Added
@@ -58,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 편집기 골격과 common-design 셸 구성
 
+[0.6.0]: https://github.com/JunhaDex/fabrics-trama-web/compare/v0.5.0..v0.6.0
 [0.5.0]: https://github.com/JunhaDex/fabrics-trama-web/compare/v0.4.0..v0.5.0
 [0.4.0]: https://github.com/JunhaDex/fabrics-trama-web/compare/v0.3.0..v0.4.0
 [0.3.0]: https://github.com/JunhaDex/fabrics-trama-web/compare/v0.2.0..v0.3.0
